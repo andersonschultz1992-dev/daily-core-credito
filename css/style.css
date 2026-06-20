@@ -273,31 +273,30 @@ body.is-exporting .bg-glow {
 }
 
 /* ── Logo ──
-   Cartão branco fixo atrás da logo (em vez de um filtro de cor) —
-   funciona com QUALQUER arquivo PNG, tenha fundo transparente ou
-   opaco. A versão anterior usava filter:brightness(0) invert(1) para
-   forçar a logo a ficar branca sobre o header escuro; isso só
-   funciona se o PNG tiver fundo transparente — em um PNG com fundo
-   opaco (branco ou de qualquer cor), o filtro "lava" a imagem
-   inteira para um retângulo branco sólido, escondendo o desenho. */
+   Badge circular na MESMA cor escura do header (--graphite-900), ao
+   invés de um cartão branco. O fundo opaco do PNG é removido via JS
+   (ver index.html, script logo após a tag <img>) — sem isso, mudar só
+   a cor deste wrap não bastaria, pois o branco do arquivo continuaria
+   visível por cima. Círculo via overflow:hidden + border-radius:50%. */
 .header-logo-wrap {
   position: absolute; top: 0; left: 0;
-  display: flex; align-items: center;
-  padding: 7px 12px;
-  background: #FFFFFF;
-  border: 1px solid rgba(255,255,255,0.14);
-  border-radius: var(--radius-sm);
-  box-shadow: 0 2px 12px rgba(0,0,0,0.20);
+  display: flex; align-items: center; justify-content: center;
+  width: 52px; height: 52px;
+  padding: 4px;
+  background: var(--graphite-900);
+  border: 1px solid rgba(255,255,255,0.10);
+  border-radius: 50%;
+  overflow: hidden;
+  box-shadow: 0 2px 12px rgba(0,0,0,0.24);
   transition: var(--transition);
 }
 .header-logo-wrap:hover {
-  box-shadow: 0 4px 18px rgba(0,0,0,0.28);
+  box-shadow: 0 4px 18px rgba(0,0,0,0.32);
   transform: translateY(-1px);
 }
 .header-logo {
-  height: 44px;
-  width: auto;
-  object-fit: contain;
+  width: 100%; height: 100%;
+  object-fit: cover;
   transition: opacity var(--transition);
 }
 .header-logo:hover { opacity: 0.85; }
@@ -1377,7 +1376,7 @@ body.edit-mode .footer-destaque-remove { display: inline-flex; }
   .toolbar-divider { display: none; }
   .search-input { width: 150px; }
   .search-input:focus { width: 175px; }
-  .header-logo { height: 38px; }
+  .header-logo-wrap { width: 44px; height: 44px; }
   .cards-grid { gap: 15px; }
 
   /* CORREÇÃO UX MOBILE: remove o scroll interno da lista de
