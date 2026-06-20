@@ -272,35 +272,35 @@ body.is-exporting .bg-glow {
   display: flex; flex-direction: column; align-items: center;
 }
 
-/* ── Logo ── */
+/* ── Logo ──
+   Cartão branco fixo atrás da logo (em vez de um filtro de cor) —
+   funciona com QUALQUER arquivo PNG, tenha fundo transparente ou
+   opaco. A versão anterior usava filter:brightness(0) invert(1) para
+   forçar a logo a ficar branca sobre o header escuro; isso só
+   funciona se o PNG tiver fundo transparente — em um PNG com fundo
+   opaco (branco ou de qualquer cor), o filtro "lava" a imagem
+   inteira para um retângulo branco sólido, escondendo o desenho. */
 .header-logo-wrap {
   position: absolute; top: 0; left: 0;
   display: flex; align-items: center;
-  padding: 6px 10px;
-  background: rgba(255,255,255,0.032);
-  border: 1px solid rgba(255,255,255,0.06);
+  padding: 7px 12px;
+  background: #FFFFFF;
+  border: 1px solid rgba(255,255,255,0.14);
   border-radius: var(--radius-sm);
-  backdrop-filter: blur(10px);
+  box-shadow: 0 2px 12px rgba(0,0,0,0.20);
   transition: var(--transition);
 }
 .header-logo-wrap:hover {
-  background: rgba(37,154,108,0.07);
-  border-color: rgba(37,154,108,0.20);
+  box-shadow: 0 4px 18px rgba(0,0,0,0.28);
+  transform: translateY(-1px);
 }
-/* Tema escuro — logo fica branco (contraste sobre fundo escuro) */
 .header-logo {
   height: 44px;
   width: auto;
   object-fit: contain;
-  filter: brightness(0) invert(1); /* branco */
-  opacity: 0.88;
-  transition: opacity var(--transition); /* bug corrigido: era --transicao (inexistente) */
+  transition: opacity var(--transition);
 }
-.header-logo:hover { opacity: 1; }
-/* Tema claro — logo volta ao visual original */
-[data-theme="light"] .header-logo {
-  filter: none; /* sem filtro, cor original do PNG */
-}
+.header-logo:hover { opacity: 0.85; }
 
 /* ── Badge institucional ── */
 .header-badge {
