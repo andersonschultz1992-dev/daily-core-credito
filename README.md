@@ -42,29 +42,42 @@ Não há mais `data/analistas.json`, não há `admin.html`, não há
 ## 2. Como funciona (visão geral)
 
 - **Supabase é a única fonte de dados.** Todas as dailies, analistas,
-  entregas e destaques ficam em 4 tabelas (`dailies`, `analistas`,
-  `entregas`, `destaques`) — ver `supabase/schema.sql`.
+  entregas e destaques ficam em 5 tabelas (`dailies`, `analistas`,
+  `entregas`, `destaques`, `destaques_cabecalho`) — ver
+  `supabase/schema.sql`.
 - **Sem login.** Qualquer pessoa que abrir o link do app pode clicar em
   **Editar**, alterar o que quiser e **Salvar** — sem usuário, sem senha.
   É o mesmo nível de confiança que já existia quando os dados ficavam só
   no navegador; a diferença é que agora ficam compartilhados entre todo o
   time e com histórico permanente.
-- **Sem IA.** O destaque do cabeçalho (ex.: *"Evolução da observabilidade
-  dos ambientes"*) é escolhido manualmente, em Modo Edição, de uma lista
-  fixa de 34 opções prontas (texto + ícone + cor) — zero chamadas de rede,
-  zero custo, zero chave de API.
-- **A daily de hoje é criada sozinha.** Ao abrir o app, ele verifica se já
-  existe uma daily com a data de hoje:
+- **Sem IA.** Os destaques do cabeçalho (ex.: *"Evolução da
+  observabilidade dos ambientes"*) são escolhidos manualmente, em Modo
+  Edição, de uma lista fixa de 34 opções prontas (texto + ícone + cor) —
+  zero chamadas de rede, zero custo, zero chave de API.
+- **A daily de hoje aparece pronta para preencher — mas só é gravada
+  quando tem conteúdo.** Ao abrir o app, ele verifica se já existe uma
+  daily com a data de hoje:
   - **Se existir**, carrega normalmente.
-  - **Se não existir**, cria automaticamente copiando o **roster de
-    analistas** (nome, cargo, foto, cor, tags) da daily anterior mais
-    recente — mas com **entregas, badge e destaque do cabeçalho vazios**,
-    prontos para o time preencher do zero. Na primeiríssima vez que o app
-    roda (banco totalmente vazio), ele semeia com os 4 integrantes padrão
-    do time.
-- **Histórico sempre disponível.** No lugar onde antes ficava a data
-  "fixa" do cabeçalho, agora há um seletor — escolher uma data anterior
-  carrega aquela daily inteira (cabeçalho, cards, destaques) na hora, sem
+  - **Se não existir**, monta uma estrutura **em memória** (rascunho),
+    copiando o **roster de analistas** (nome, cargo, foto, cor, tags) da
+    daily anterior mais recente — com **entregas, badge e destaques
+    vazios**. Esse rascunho **não é gravado no banco** até você clicar em
+    **Salvar** com algum conteúdo de fato (uma entrega, um badge ou um
+    destaque). Isso evita criar registros vazios para dias em que ninguém
+    preencheu nada. Na primeiríssima vez (banco vazio), o rascunho usa os
+    4 integrantes padrão do time.
+- **Excluir uma daily.** Em Modo Edição há um botão **Excluir** que remove
+  por completo a daily atual do banco (com suas entregas, destaques e
+  analistas, via `ON DELETE CASCADE`). Após excluir, o app carrega a daily
+  mais recente que sobrou (ou monta um rascunho de hoje, se o banco ficou
+  vazio). Pede confirmação antes, e a ação não pode ser desfeita.
+- **Planejar datas futuras e consultar passadas.** O ícone de calendário
+  ao lado de "Daily DEVOPS" abre um seletor de data: escolha qualquer dia
+  (futuro ou passado). Se já houver daily naquela data, ela é carregada;
+  se não, abre um rascunho vazio para preencher e salvar.
+- **Histórico sempre disponível.** A "Agenda de Dailies" na lateral lista
+  **apenas datas que têm daily salva** (rascunhos não preenchidos não
+  aparecem) — escolher uma carrega aquela daily inteira na hora, sem
   recarregar a página.
 
 ---
@@ -131,9 +144,9 @@ python -m http.server 8000
 
 ### Rotina da Daily
 
-1. Abra o link do app — a daily de hoje já estará carregada (criada
-   automaticamente se for a primeira vez no dia, com roster copiado de
-   ontem e tudo mais vazio).
+1. Abra o link do app — a daily de hoje já aparece pronta para preencher
+   (com o time copiado da última daily). Enquanto você não salvar nada,
+   ela é só um rascunho em memória, **não** ocupa um registro no banco.
 2. Clique em **Editar**.
 3. Preencha as entregas de cada analista (**Adicionar entrega**), ajuste
    badge/número se quiser, edite título/subtítulo/descrição se necessário.
@@ -141,16 +154,37 @@ python -m http.server 8000
    cabeçalho (biblioteca de 34 opções prontas — ver seção 6).
 5. Adicione os **Destaques da Semana** no rodapé, se quiser
    (**Adicionar destaque**, texto livre).
-6. Clique em **Salvar**. Pronto — já está no Supabase, visível para todo
-   o time.
+6. Clique em **Salvar**. A daily é gravada no Supabase (visível para todo
+   o time) — e é neste momento que ela passa a existir no banco e a
+   aparecer na Agenda. Salvar uma daily totalmente vazia não cria registro
+   (o app avisa para preencher algo antes).
 7. Clique em **Imagem** para gerar o PNG da página inteira para enviar no
    chat, se for o caso.
 
-### Consultando dailies anteriores
+### Planejando dailies futuras / consultando passadas
 
-Use o seletor de data no cabeçalho (onde antes ficava só a data fixa) —
-ele lista todas as dailies já registradas, mais recente primeiro. Escolher
-uma data carrega aquela daily inteira na hora.
+Clique no ícone de calendário ao lado de "Daily DEVOPS" e escolha
+qualquer data. Se já existir uma daily naquela data, ela é carregada;
+se não, abre um rascunho vazio (com o time já preenchido) para você
+planejar com antecedência. Preencha e clique em **Salvar** — quando
+chegar o dia, os dados estarão lá. Datas passadas funcionam do mesmo
+jeito: selecione e edite normalmente.
+
+### Consultando dailies pelo histórico
+
+A "Agenda de Dailies" na lateral lista **apenas as datas que têm daily
+salva**, mais recente primeiro. Rascunhos ainda não preenchidos não
+aparecem ali. Clique em uma data para carregar aquela daily na hora.
+
+### Excluir uma daily
+
+Em Modo Edição, o botão **Excluir** (vermelho, ao lado de Salvar) remove
+a daily atual por completo do banco — entregas, destaques e analistas
+daquela data somem junto. O app pede confirmação antes; a ação **não pode
+ser desfeita**. Depois de excluir, ele carrega a daily mais recente que
+sobrou (ou abre um rascunho de hoje, se não houver mais nenhuma). Uma
+daily que ainda é só rascunho (nunca salva) não precisa ser excluída —
+basta navegar para outra data.
 
 ### Adicionar/remover analista
 
@@ -268,7 +302,14 @@ created_at / updated_at  badge_numero                                           
   reinseridos por inteiro a cada **Salvar** — simples e robusto, sem
   precisar reconciliar diffs.
 - `ON DELETE CASCADE`: remover uma daily remove automaticamente seus
-  analistas, entregas e destaques associados (de ambas as tabelas).
+  analistas, entregas e destaques associados (de ambas as tabelas de
+  destaque). É o que faz o botão **Excluir** limpar tudo de uma vez, sem
+  deixar linhas órfãs.
+- **Sem registros vazios.** Uma linha em `dailies` só passa a existir
+  quando o usuário salva conteúdo de fato — o app trabalha com um rascunho
+  em memória até lá (ver seção 2). Por isso o schema **não** semeia mais
+  nenhuma daily de exemplo: o roster inicial é montado em memória pelo
+  app, não gravado no banco.
 
 > **Atualizando de uma versão anterior?** O `schema.sql` migra
 > automaticamente: se as colunas antigas `dailies.destaque_texto` /

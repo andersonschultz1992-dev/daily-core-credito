@@ -117,10 +117,16 @@
         spellcheck="false"
       >Resultados, melhorias operacionais, estabilidade e evolução contínua dos ambientes.</p>
 
-      <!-- DATA DA DAILY — agora um seletor de daily histórica -->
+      <!-- DATA DA DAILY — seletor de daily histórica + date picker para criar/ir a qualquer data -->
       <div class="header-date-wrap" id="js-date-wrap">
         <div class="header-date-box">
-          <i class="fa-solid fa-calendar-days"></i>
+          <button
+            type="button"
+            class="date-picker-btn"
+            id="js-date-picker-btn"
+            aria-label="Escolher data (criar ou abrir daily de qualquer dia)"
+            title="Escolher data — criar ou abrir a daily de qualquer dia"
+          ><i class="fa-solid fa-calendar-days"></i></button>
           <span class="date-label">Daily DevOps</span>
           <span class="date-sep">·</span>
           <select
@@ -131,6 +137,8 @@
           >
             <option value="">Carregando...</option>
           </select>
+          <!-- input date nativo: invisível, acionado pelo botão de calendário -->
+          <input type="date" id="js-date-picker" class="date-picker-input" aria-hidden="true" tabindex="-1" />
         </div>
       </div>
 
@@ -201,6 +209,11 @@
         <span class="btn-label">Salvar</span>
       </button>
 
+      <button type="button" id="js-delete-daily" class="btn btn--danger edit-only hidden" title="Excluir esta daily do histórico">
+        <i class="fa-solid fa-trash-can"></i>
+        <span class="btn-label">Excluir</span>
+      </button>
+
       <div class="toolbar-divider"></div>
 
       <button type="button" id="js-export-img" class="btn btn--ghost" title="Gerar imagem PNG da página inteira">
@@ -216,15 +229,35 @@
   </div>
 
   <!-- ═══════════════════════════════════════════
-       MAIN CONTENT
+       MAIN CONTENT + HISTÓRICO LATERAL
   ═══════════════════════════════════════════ -->
-  <main class="main-content" id="js-main">
-    <div class="cards-grid" id="js-grid" role="list" aria-label="Cards dos analistas"></div>
-    <div class="empty-state hidden" id="js-empty" role="status" aria-live="polite">
-      <i class="fa-solid fa-circle-xmark"></i>
-      <p>Nenhum analista encontrado.</p>
-    </div>
-  </main>
+  <div class="content-layout" id="js-content-layout">
+    <main class="main-content" id="js-main">
+      <div class="cards-grid" id="js-grid" role="list" aria-label="Cards dos analistas"></div>
+      <div class="empty-state hidden" id="js-empty" role="status" aria-live="polite">
+        <i class="fa-solid fa-circle-xmark"></i>
+        <p>Nenhum analista encontrado.</p>
+      </div>
+    </main>
+
+    <!-- HISTÓRICO/AGENDA DE DAILIES (apenas datas com daily salva) -->
+    <aside class="historico-sidebar" id="js-historico" aria-label="Histórico de dailies">
+      <div class="historico-header">
+        <p class="historico-title"><i class="fa-solid fa-calendar-check"></i> Agenda de Dailies</p>
+        <button type="button" class="historico-toggle" id="js-historico-toggle" aria-label="Recolher/expandir histórico" aria-expanded="true">
+          <i class="fa-solid fa-chevron-right"></i>
+        </button>
+      </div>
+      <ul class="historico-list" id="js-historico-list"></ul>
+    </aside>
+  </div>
+
+  <!-- Botão flutuante (mobile) para abrir a agenda de dailies -->
+  <button type="button" class="historico-fab" id="js-historico-fab" aria-label="Abrir agenda de dailies" title="Agenda de Dailies">
+    <i class="fa-solid fa-calendar-check"></i>
+  </button>
+  <!-- Backdrop do painel de histórico no mobile (fecha ao tocar) -->
+  <div class="historico-backdrop" id="js-historico-backdrop" aria-hidden="true"></div>
 
   <!-- ═══════════════════════════════════════════
        FOOTER

@@ -229,34 +229,14 @@ CREATE POLICY "destaques_cabecalho_escrita_publica"
   ON public.destaques_cabecalho FOR ALL USING (true) WITH CHECK (true);
 
 -- ================================================================
--- DADOS DE EXEMPLO (seed inicial)
+-- DADOS DE EXEMPLO (seed inicial) — REMOVIDO
 -- ----------------------------------------------------------------
--- Se a tabela "dailies" estiver completamente vazia, semeia a daily
--- de hoje com o roster padrão do time. Isso é só uma conveniência
--- para o primeiro acesso — o app também sabe criar a daily do dia
--- automaticamente sozinho (ver js/app.js), então rodar este bloco
--- não é estritamente obrigatório.
+-- Versões anteriores semeavam aqui uma daily de hoje já no banco
+-- (com o roster do time, mas sem entregas). Isso passou a contrariar
+-- o comportamento desejado: NÃO criar registros de daily vazios.
+--
+-- Agora o app monta o roster inicial em MEMÓRIA (rascunho) e só grava
+-- a daily no banco quando o usuário salva algum conteúdo de fato
+-- (entrega, badge ou destaque). Por isso não há mais seed aqui — uma
+-- daily só passa a existir no banco quando realmente preenchida.
 -- ================================================================
-DO $$
-DECLARE
-  v_daily_id UUID;
-BEGIN
-  IF NOT EXISTS (SELECT 1 FROM public.dailies LIMIT 1) THEN
-
-    INSERT INTO public.dailies (data_daily, titulo, subtitulo, descricao)
-    VALUES (CURRENT_DATE, 'Principais Entregas da Semana', 'Time Core & Crédito',
-            'Resultados, melhorias operacionais, estabilidade e evolução contínua dos ambientes.')
-    RETURNING id INTO v_daily_id;
-
-    INSERT INTO public.analistas (daily_id, nome, cargo, foto, cor_tema, tags, ordem) VALUES
-      (v_daily_id, 'Anderson Schultz Ribeiro',      'Analista SRE e DevOps PL', 'assets/fotos/anderson.jpg', '#259A6C', ARRAY['SRE','DevOps'], 0),
-      (v_daily_id, 'Diego Gonçalves de Oliveira',   'Analista SRE e DevOps SR', 'assets/fotos/diego.jpg',    '#357F82', ARRAY['SRE','DevOps'], 1),
-      (v_daily_id, 'Gilson Batista da Silva Souza', 'Analista SRE e DevOps SR', 'assets/fotos/gilson.jpg',   '#6F8794', ARRAY['SRE','DevOps'], 2),
-      (v_daily_id, 'Matheus da Silva de Farias',    'Analista SRE e DevOps JR', 'assets/fotos/matheus.jpg',  '#BB9748', ARRAY['SRE','DevOps'], 3);
-
-    -- Entregas iniciam vazias propositalmente (ver requisito do projeto)
-    -- — nenhum INSERT em "entregas" aqui.
-
-  END IF;
-END;
-$$;

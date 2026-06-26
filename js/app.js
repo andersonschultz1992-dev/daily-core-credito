@@ -72,6 +72,13 @@
     subtitulo:    $('#js-subtitulo'),
     descricao:    $('#js-descricao'),
     dateSelect:   $('#js-date-select'),
+    datePicker:      $('#js-date-picker'),
+    datePickerBtn:   $('#js-date-picker-btn'),
+    historico:       $('#js-historico'),
+    historicoList:   $('#js-historico-list'),
+    historicoToggle: $('#js-historico-toggle'),
+    historicoFab:    $('#js-historico-fab'),
+    historicoBackdrop: $('#js-historico-backdrop'),
     destaqueBox:  $('#js-destaque'),
     destaqueChips:    $('#js-destaque-chips'),
     destaqueAddWrap:  $('#js-destaque-add-wrap'),
@@ -87,6 +94,7 @@
     editBtn:      $('#js-toggle-edit'),
     addAnalista:  $('#js-add-analista'),
     saveBtn:      $('#js-save'),
+    deleteBtn:    $('#js-delete-daily'),
     exportImg:    $('#js-export-img'),
     shareBtn:     $('#js-share'),
     toast:        $('#js-toast'),
@@ -162,11 +170,11 @@
      GARANTIR DAILY DE HOJE
      ------------------------------------
      1. Busca uma daily com data_daily = hoje.
-     2. Se existir, carrega.
-     3. Se não existir, cria automaticamente copiando o roster da
-        daily anterior mais recente (entregas/badge/destaque vazios).
-        Se não houver nenhuma daily anterior (primeiro uso), semeia
-        com o roster padrão do time.
+     2. Se existir no banco, carrega.
+     3. Se NÃO existir, monta um RASCUNHO em memória (não grava nada
+        no banco). A daily só é persistida quando o usuário clicar em
+        "Salvar" com algum conteúdo — isso evita criar registros
+        vazios para dias em que ninguém preencheu nada.
   ══════════════════════════════════════ */
   async function ensureTodayDaily() {
     await carregarListaDailies();
@@ -177,7 +185,7 @@
       return;
     }
 
-    await criarDailyDeHoje();
+    await montarRascunhoDaily(state.todayISO);
   }
 
   async function carregarListaDailies() {
@@ -190,12 +198,18 @@
     state.dailiesLista = data || [];
   }
 
-  /** Cria a daily de hoje copiando o roster (sem entregas) da daily
-   *  anterior mais recente, ou semeando o roster padrão se for o
-   *  primeiro uso. Lida com corrida entre dois navegadores abrindo
-   *  o app ao mesmo tempo (violação de UNIQUE em data_daily). */
-  async function criarDailyDeHoje() {
-    const anterior = state.dailiesLista[0] || null; // já ordenada desc; mais recente é < hoje (hoje ainda não existe)
+  /** Monta uma daily VAZIA em memória (rascunho), sem gravar no banco.
+   *  Copia o roster (nome/cargo/foto/cor/tags/ícone) da daily existente
+   *  mais recente anterior à data alvo — assim planejar uma daily futura
+   *  herda o time da última já cadastrada. Entregas/badge/destaques
+   *  começam vazios. A persistência só acontece no salvar(), quando há
+   *  conteúdo (ver temConteudoParaSalvar / salvar). */
+  async function montarRascunhoDaily(dataISO) {
+    const alvoISO = dataISO || state.todayISO;
+
+    const anterior = state.dailiesLista.find(d => d.data_daily < alvoISO)
+                  || state.dailiesLista[0]
+                  || null;
 
     let tituloBase    = 'Principais Entregas da Semana';
     let subtituloBase = 'Time Core & Crédito';
@@ -223,45 +237,77 @@
       }
     }
 
-    let dailyId;
+    // id: null marca o rascunho como "ainda não persistido". O salvar()
+    // detecta isso e faz INSERT em vez de UPDATE.
+    state.dados = {
+      id: null,
+      titulo: tituloBase, subtitulo: subtituloBase, descricao: descricaoBase,
+      dataDaily: formatarDataBR(alvoISO), dataDailyISO: alvoISO,
+      destaquesPrincipais: [],
+      destaques: [],
+      analistas: rosterBase.map((a, i) => ({
+        _uid: 'rascunho_a' + i, id: null,
+        nome: a.nome, cargo: a.cargo, foto: a.foto || '',
+        badgeNumero: '', badgeTexto: '', badgeIcone: a.badge_icone || 'fa-solid fa-chart-line',
+        corTema: a.cor_tema || COR_PADRAO,
+        tags: Array.isArray(a.tags) ? a.tags : ['SRE', 'DevOps'],
+        entregas: [],
+      })),
+    };
+    state.currentDailyId = null;
+    processarDados();
+
+    const ehHoje = alvoISO === state.todayISO;
+    showToast(ehHoje
+      ? '📅 Daily de hoje — preencha e clique em Salvar para registrar.'
+      : `📅 Nova daily para ${formatarDataBR(alvoISO)} — preencha e clique em Salvar para registrar.`);
+  }
+
+  /** Vai para a daily de uma data: se já existe no banco, carrega; se
+   *  não, monta um RASCUNHO em memória (sem gravar). A persistência só
+   *  acontece no salvar(). Usado pelo date picker do cabeçalho. */
+  async function irParaData(dataISO) {
+    if (!dataISO) return;
+    if (state.modoDemo || !state.supabase) {
+      showToast('⚠️ Configure o Supabase em js/config.js para criar dailies de outras datas.');
+      return;
+    }
+    const existente = state.dailiesLista.find(d => d.data_daily === dataISO);
     try {
-      const { data: novaDaily, error: errDaily } = await state.supabase
-        .from('dailies')
-        .insert({
-          data_daily: state.todayISO,
-          titulo:     tituloBase,
-          subtitulo:  subtituloBase,
-          descricao:  descricaoBase,
-        })
-        .select('id')
-        .single();
-      if (errDaily) throw errDaily;
-      dailyId = novaDaily.id;
+      if (existente) {
+        if (existente.id !== state.currentDailyId) await carregarDailyPorId(existente.id);
+      } else {
+        await montarRascunhoDaily(dataISO);
+      }
     } catch (err) {
-      // Corrida entre dois navegadores: outra aba já criou a daily de
-      // hoje entre o SELECT e este INSERT (violação de UNIQUE). Em vez
-      // de mostrar erro, simplesmente busca e carrega a que já existe.
-      console.warn('[Daily] Não foi possível criar a daily de hoje (provável corrida), recarregando lista:', err);
-      await carregarListaDailies();
-      const jaCriada = state.dailiesLista.find(d => d.data_daily === state.todayISO);
-      if (jaCriada) { await carregarDailyPorId(jaCriada.id); return; }
-      throw err; // falha real — cai para o modo demonstração no init()
+      console.error('[irParaData]', err);
+      showToast('❌ Não foi possível abrir a daily dessa data.');
     }
+  }
 
-    // Roster inicial — entregas/badge sempre vazios numa nova daily.
-    if (rosterBase.length) {
-      const payload = rosterBase.map((a, i) => ({
-        daily_id: dailyId, nome: a.nome, cargo: a.cargo, foto: a.foto,
-        badge_numero: '', badge_texto: '', badge_icone: a.badge_icone,
-        cor_tema: a.cor_tema, tags: a.tags, ordem: i,
-      }));
-      const { error: errAnalistas } = await state.supabase.from('analistas').insert(payload);
-      if (errAnalistas) console.warn('[Daily] Falha ao copiar roster para a nova daily:', errAnalistas);
-    }
+  /** Verdadeiro se a daily atual tem ALGO que valha a pena persistir:
+   *  ao menos uma entrega, um destaque (cabeçalho ou rodapé), ou um
+   *  badge preenchido. Apenas ter o roster (nomes/cargos copiados) NÃO
+   *  conta como conteúdo — é o que evita registros vazios no banco. */
+  function temConteudoParaSalvar() {
+    const d = state.dados;
+    if (!d) return false;
 
-    state.dailiesLista.unshift({ id: dailyId, data_daily: state.todayISO });
-    await carregarDailyPorId(dailyId);
-    showToast('📅 Nova daily de hoje criada — preencha as entregas da semana.');
+    const temEntrega = (d.analistas || []).some(a =>
+      (a.entregas || []).some(t => t && t.trim()));
+    if (temEntrega) return true;
+
+    const temBadge = (d.analistas || []).some(a =>
+      (a.badgeNumero && a.badgeNumero.trim()) || (a.badgeTexto && a.badgeTexto.trim()));
+    if (temBadge) return true;
+
+    const temDestaqueCabecalho = (d.destaquesPrincipais || []).length > 0;
+    if (temDestaqueCabecalho) return true;
+
+    const temDestaqueRodape = (d.destaques || []).some(x => x.texto && x.texto.trim());
+    if (temDestaqueRodape) return true;
+
+    return false;
   }
 
   function seedRosterPadrao() {
@@ -341,17 +387,85 @@
     if (state.modoDemo) return; // já tratado em ativarModoDemo()
 
     if (!state.dailiesLista.length) {
-      ui.dateSelect.innerHTML = '<option value="">Nenhuma daily registrada</option>';
-      ui.dateSelect.disabled  = true;
+      // Banco vazio: se houver um rascunho atual, mostra a data dele;
+      // senão, indica que ainda não há dailies registradas.
+      if (state.dados && !state.dados.id && state.dados.dataDailyISO) {
+        const labelR = formatarDataBR(state.dados.dataDailyISO)
+          + (state.dados.dataDailyISO === state.todayISO ? ' · Hoje' : '') + ' · (não salva)';
+        ui.dateSelect.innerHTML = `<option value="__rascunho__">${labelR}</option>`;
+        ui.dateSelect.value = '__rascunho__';
+        ui.dateSelect.disabled = false;
+      } else {
+        ui.dateSelect.innerHTML = '<option value="">Nenhuma daily registrada</option>';
+        ui.dateSelect.disabled  = true;
+      }
       return;
     }
 
     ui.dateSelect.disabled = false;
-    ui.dateSelect.innerHTML = state.dailiesLista.map(d => {
+
+    // Se a daily atual é um RASCUNHO (ainda sem id, data não está na
+    // lista salva), inclui uma opção transitória para o seletor refletir
+    // a data realmente exibida na tela — sem poluir o histórico.
+    const ehRascunho = state.dados && !state.dados.id && state.dados.dataDailyISO
+      && !state.dailiesLista.some(d => d.data_daily === state.dados.dataDailyISO);
+
+    let html = state.dailiesLista.map(d => {
       const label = formatarDataBR(d.data_daily) + (d.data_daily === state.todayISO ? ' · Hoje' : '');
       return `<option value="${d.id}">${label}</option>`;
     }).join('');
-    if (state.currentDailyId) ui.dateSelect.value = state.currentDailyId;
+
+    if (ehRascunho) {
+      const labelR = formatarDataBR(state.dados.dataDailyISO)
+        + (state.dados.dataDailyISO === state.todayISO ? ' · Hoje' : '') + ' · (não salva)';
+      html = `<option value="__rascunho__">${labelR}</option>` + html;
+    }
+
+    ui.dateSelect.innerHTML = html;
+    if (ehRascunho) ui.dateSelect.value = '__rascunho__';
+    else if (state.currentDailyId) ui.dateSelect.value = state.currentDailyId;
+  }
+
+  /* ══════════════════════════════════════
+     HISTÓRICO / AGENDA DE DAILIES (lateral direita)
+     ------------------------------------
+     Lista apenas datas que possuem daily salva (state.dailiesLista
+     só contém dailies que existem no banco). Clicar carrega aquela
+     daily. Passadas e futuras aparecem; a do dia atual e a que está
+     aberta recebem destaque visual.
+  ══════════════════════════════════════ */
+  function renderHistorico() {
+    if (!ui.historicoList) return;
+
+    if (state.modoDemo || !state.dailiesLista.length) {
+      ui.historicoList.innerHTML = state.modoDemo
+        ? '<li class="historico-empty">Configure o Supabase para ver o histórico de dailies.</li>'
+        : '<li class="historico-empty">Nenhuma daily registrada ainda.</li>';
+      return;
+    }
+
+    // Já vem ordenada desc (mais recente primeiro).
+    ui.historicoList.innerHTML = state.dailiesLista.map(d => {
+      const ehHoje  = d.data_daily === state.todayISO;
+      const ehFutura = d.data_daily > state.todayISO;
+      const ativa   = d.id === state.currentDailyId;
+      const tag = ehHoje ? '<span class="historico-tag hoje">Hoje</span>'
+                : ehFutura ? '<span class="historico-tag futura">Futura</span>'
+                : '';
+      return `
+        <li>
+          <button type="button" class="historico-item${ativa ? ' ativa' : ''}" data-id="${d.id}" title="Abrir daily de ${formatarDataBR(d.data_daily)}">
+            <i class="fa-solid fa-calendar-day"></i>
+            <span class="historico-data">${formatarDataBR(d.data_daily)}</span>
+            ${tag}
+          </button>
+        </li>`;
+    }).join('');
+  }
+
+  /** Fecha o painel de histórico quando ele está em modo overlay (mobile). */
+  function fecharHistoricoMobile() {
+    document.body.classList.remove('historico-aberto');
   }
 
   /* ══════════════════════════════════════
@@ -365,6 +479,8 @@
     ui.descricao.textContent = d.descricao || '';
 
     renderDateSelector();
+    renderHistorico();
+    if (ui.datePicker && state.dados.dataDailyISO) ui.datePicker.value = state.dados.dataDailyISO;
     renderDestaquesPrincipais();
     renderDestaqueChips();
     renderDestaqueAddSelect();
@@ -970,19 +1086,66 @@
       return;
     }
 
-    state.saving = true;
-    ui.saveBtn.disabled = true;
-    const originalHTML = ui.saveBtn.innerHTML;
-    ui.saveBtn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i>';
-
+    // Antes de gravar, captura edições pendentes dos campos do cabeçalho
+    // para que a checagem de conteúdo abaixo enxergue o estado atual.
     const d  = state.dados;
     d.titulo    = ui.titulo.textContent.trim()    || d.titulo;
     d.subtitulo = ui.subtitulo.textContent.trim() || d.subtitulo;
     d.descricao = ui.descricao.textContent.trim() || d.descricao;
     d.analistas = state.analistas;
 
+    // Não cria/atualiza registros vazios: uma daily só é persistida se
+    // tiver conteúdo de fato (entrega, badge ou destaque). Isso vale
+    // tanto para rascunhos novos quanto para uma daily existente que o
+    // usuário esvaziou — neste segundo caso, o correto é excluir.
+    if (!temConteudoParaSalvar()) {
+      if (d.id) {
+        showToast('ℹ️ Esta daily está vazia. Para removê-la do histórico, use o botão Excluir.');
+      } else {
+        showToast('📝 Preencha ao menos uma entrega, badge ou destaque antes de salvar.');
+      }
+      return;
+    }
+
+    state.saving = true;
+    ui.saveBtn.disabled = true;
+    const originalHTML = ui.saveBtn.innerHTML;
+    ui.saveBtn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i>';
+
     try {
       const sb = state.supabase;
+
+      // 0) Se for um RASCUNHO (ainda não persistido), cria a linha da
+      //    daily agora — é aqui que a daily "nasce" no banco, somente
+      //    quando há conteúdo. Trata corrida de UNIQUE(data_daily).
+      if (!d.id) {
+        try {
+          const { data: novaDaily, error: errNova } = await sb.from('dailies').insert({
+            data_daily: d.dataDailyISO,
+            titulo:     d.titulo,
+            subtitulo:  d.subtitulo,
+            descricao:  d.descricao,
+          }).select('id').single();
+          if (errNova) throw errNova;
+          d.id = novaDaily.id;
+        } catch (errInsert) {
+          // Outra aba pode ter criado a daily desta data nesse meio-tempo.
+          console.warn('[Salvar] Falha ao inserir daily nova (provável corrida de data):', errInsert);
+          await carregarListaDailies();
+          const jaCriada = state.dailiesLista.find(x => x.data_daily === d.dataDailyISO);
+          if (jaCriada) {
+            d.id = jaCriada.id; // reaproveita a linha existente; segue gravando o conteúdo
+          } else {
+            throw errInsert;
+          }
+        }
+        // Mantém a lista/agenda em sincronia (sem duplicar).
+        if (!state.dailiesLista.some(x => x.id === d.id)) {
+          state.dailiesLista.push({ id: d.id, data_daily: d.dataDailyISO });
+          state.dailiesLista.sort((a, b) => (a.data_daily < b.data_daily ? 1 : -1));
+        }
+        state.currentDailyId = d.id;
+      }
 
       // 1) Campos da própria daily
       const { error: errDaily } = await sb.from('dailies').update({
@@ -1050,7 +1213,10 @@
       }
 
       // Re-sincroniza UIDs dos cards (mudaram pois os ids foram recriados)
+      // e atualiza o histórico/seletor (uma daily nova passa a aparecer).
       processarDados();
+      renderHistorico();
+      renderDateSelector();
       showToast('💾 Dados salvos com sucesso!');
     } catch (err) {
       console.error('Erro ao salvar:', err);
@@ -1060,6 +1226,73 @@
       ui.saveBtn.disabled = false;
       ui.saveBtn.innerHTML = originalHTML;
     }
+  }
+
+  /* ══════════════════════════════════════
+     EXCLUIR DAILY
+     ------------------------------------
+     Remove por completo a daily atual do banco. As tabelas filhas
+     (analistas, entregas, destaques, destaques_cabecalho) somem junto
+     via ON DELETE CASCADE definido no schema — não há "estatística
+     agregada" persistida em outra tabela, então não há nada a
+     recalcular além de atualizar a lista/agenda em memória. Após
+     excluir, navega para outra daily (a mais recente) ou monta o
+     rascunho de hoje, mantendo o histórico íntegro.
+  ══════════════════════════════════════ */
+  async function excluirDaily() {
+    if (state.saving) return;
+
+    if (state.modoDemo || !state.supabase) {
+      showToast('⚠️ Configure o Supabase em js/config.js para excluir dailies.');
+      return;
+    }
+
+    const d = state.dados;
+
+    // Rascunho ainda não salvo: não há nada no banco para excluir.
+    if (!d || !d.id) {
+      showToast('ℹ️ Esta daily ainda não foi salva — não há registro a excluir.');
+      return;
+    }
+
+    const idAlvo  = d.id;
+    const dataAlvo = d.dataDailyISO;
+
+    confirmDialog(
+      `Excluir a daily de <strong>${escHtml(formatarDataBR(dataAlvo))}</strong>?<br>
+       <span style="font-size:12px;opacity:0.8">Esta ação remove o registro e todas as entregas, destaques e analistas dessa data. Não pode ser desfeita.</span>`,
+      async () => {
+        state.saving = true;
+        try {
+          // ON DELETE CASCADE remove as linhas filhas automaticamente.
+          const { error } = await state.supabase.from('dailies').delete().eq('id', idAlvo);
+          if (error) throw error;
+
+          // Remove da lista/agenda em memória (mantém histórico íntegro).
+          state.dailiesLista = state.dailiesLista.filter(x => x.id !== idAlvo);
+
+          showToast('🗑️ Daily excluída com sucesso.');
+
+          // Navega para uma daily ainda existente: a de hoje se houver,
+          // senão a mais recente; se o banco ficou vazio, monta rascunho
+          // de hoje (em memória, sem recriar registro).
+          const hoje = state.dailiesLista.find(x => x.data_daily === state.todayISO);
+          const alvo = hoje || state.dailiesLista[0] || null;
+          if (alvo) {
+            await carregarDailyPorId(alvo.id);
+          } else {
+            await montarRascunhoDaily(state.todayISO);
+          }
+          renderHistorico();
+          renderDateSelector();
+        } catch (err) {
+          console.error('[Excluir daily]', err);
+          showToast('❌ Não foi possível excluir a daily. Tente novamente.');
+        } finally {
+          state.saving = false;
+        }
+      }
+    );
   }
 
   /**
@@ -1376,17 +1609,77 @@
     ui.editBtn.addEventListener('click', toggleEditMode);
     ui.addAnalista.addEventListener('click', adicionarAnalista);
     ui.saveBtn.addEventListener('click', salvar);
+    if (ui.deleteBtn) ui.deleteBtn.addEventListener('click', excluirDaily);
     ui.exportImg.addEventListener('click', exportarImagem);
     ui.shareBtn.addEventListener('click', gerarLink);
 
     if (ui.dateSelect) {
       ui.dateSelect.addEventListener('change', async (e) => {
         const id = e.target.value;
+        // Ignora a opção transitória do rascunho (já é a daily exibida).
+        if (id === '__rascunho__') return;
         if (!id || !state.supabase || id === state.currentDailyId) return;
         showToast('⏳ Carregando daily...');
         try { await carregarDailyPorId(id); }
         catch (err) { console.error('[Date selector]', err); showToast('❌ Erro ao carregar daily selecionada.'); }
       });
+    }
+
+    // Date picker: o botão de calendário abre o seletor de data nativo;
+    // escolher uma data abre a daily dela (ou cria, se ainda não existe).
+    if (ui.datePickerBtn && ui.datePicker) {
+      ui.datePickerBtn.addEventListener('click', () => {
+        if (state.modoDemo || !state.supabase) {
+          showToast('⚠️ Configure o Supabase em js/config.js para criar dailies de outras datas.');
+          return;
+        }
+        if (state.dados && state.dados.dataDailyISO) ui.datePicker.value = state.dados.dataDailyISO;
+        // showPicker() é o método moderno; cai para .focus()+click() se indisponível.
+        if (typeof ui.datePicker.showPicker === 'function') {
+          try { ui.datePicker.showPicker(); return; } catch (_) {}
+        }
+        ui.datePicker.focus();
+        ui.datePicker.click();
+      });
+      ui.datePicker.addEventListener('change', async (e) => {
+        const dataISO = e.target.value;
+        if (!dataISO) return;
+        await irParaData(dataISO);
+      });
+    }
+
+    // Histórico lateral: clique numa data abre a daily (delegação).
+    if (ui.historicoList) {
+      ui.historicoList.addEventListener('click', async (e) => {
+        const btn = e.target.closest('.historico-item');
+        if (!btn) return;
+        const id = btn.dataset.id;
+        if (!id || id === state.currentDailyId) { fecharHistoricoMobile(); return; }
+        showToast('⏳ Carregando daily...');
+        try { await carregarDailyPorId(id); fecharHistoricoMobile(); }
+        catch (err) { console.error('[Histórico]', err); showToast('❌ Erro ao carregar daily.'); }
+      });
+    }
+    // Toggle (desktop: recolher faixa lateral / mobile: fechar painel).
+    if (ui.historicoToggle) {
+      ui.historicoToggle.addEventListener('click', () => {
+        if (window.matchMedia('(max-width: 1024px)').matches) {
+          fecharHistoricoMobile();
+        } else {
+          const recolhido = document.body.classList.toggle('historico-recolhido');
+          ui.historicoToggle.setAttribute('aria-expanded', String(!recolhido));
+        }
+      });
+    }
+    // FAB (mobile): abre o painel de histórico como overlay.
+    if (ui.historicoFab) {
+      ui.historicoFab.addEventListener('click', () => {
+        document.body.classList.add('historico-aberto');
+      });
+    }
+    // Tocar no backdrop fecha o painel.
+    if (ui.historicoBackdrop) {
+      ui.historicoBackdrop.addEventListener('click', fecharHistoricoMobile);
     }
 
     if (ui.destaqueAddSelect) {
