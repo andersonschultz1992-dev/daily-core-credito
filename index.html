@@ -4,8 +4,23 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <meta name="description" content="Daily DevOps — Time Core & Crédito · Confederação Sicredi" />
-  <meta name="theme-color" content="#0F1B16" />
+  <meta name="theme-color" content="#0F1B16" id="js-theme-color" />
   <title>Daily Core & Crédito — Sicredi</title>
+
+  <!-- Aplica a preferência antes do primeiro paint para evitar o flash
+       do tema escuro ao abrir a página em outro tema. -->
+  <script>
+    (function () {
+      try {
+        var tema = localStorage.getItem('sicredi-daily-theme-v8')
+                || localStorage.getItem('sicredi-daily-theme-v7');
+        if (['dark', 'light', 'cooperative'].indexOf(tema) !== -1) {
+          document.documentElement.setAttribute('data-theme', tema);
+          document.documentElement.style.colorScheme = tema === 'dark' ? 'dark' : 'light';
+        }
+      } catch (_) {}
+    })();
+  </script>
 
   <!-- Favicon institucional (SVG inline — hexágono cooperativo + nós de rede) -->
   <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%230F1B16'/%3E%3Cpath d='M16 4 L27 10 V22 L16 28 L5 22 V10 Z' fill='none' stroke='%23259A6C' stroke-width='2'/%3E%3Cpath d='M16 10 L10 20 M16 10 L22 20 M10 20 L22 20' stroke='%23628878' stroke-width='1.2'/%3E%3Ccircle cx='16' cy='10' r='2.4' fill='%233FB585'/%3E%3Ccircle cx='10' cy='20' r='2.4' fill='%23357F82'/%3E%3Ccircle cx='22' cy='20' r='2.4' fill='%23BB9748'/%3E%3C/svg%3E" />
@@ -24,6 +39,46 @@
   <div class="bg-grid" aria-hidden="true"></div>
   <div class="bg-glow bg-glow--1" aria-hidden="true"></div>
   <div class="bg-glow bg-glow--2" aria-hidden="true"></div>
+
+  <!-- Fundo vivo do tema Cooperativo: cata-ventos vetoriais em CSS,
+       sem imagens externas e com respeito a prefers-reduced-motion. -->
+  <div class="cooperative-wind-bg" aria-hidden="true">
+    <div class="wind-orbit wind-orbit--1">
+      <div class="pinwheel pinwheel--green">
+        <span class="pinwheel-blade"></span><span class="pinwheel-blade"></span>
+        <span class="pinwheel-blade"></span><span class="pinwheel-blade"></span>
+        <span class="pinwheel-hub"></span>
+      </div>
+    </div>
+    <div class="wind-orbit wind-orbit--2">
+      <div class="pinwheel pinwheel--light pinwheel--reverse">
+        <span class="pinwheel-blade"></span><span class="pinwheel-blade"></span>
+        <span class="pinwheel-blade"></span><span class="pinwheel-blade"></span>
+        <span class="pinwheel-hub"></span>
+      </div>
+    </div>
+    <div class="wind-orbit wind-orbit--3">
+      <div class="pinwheel pinwheel--dark">
+        <span class="pinwheel-blade"></span><span class="pinwheel-blade"></span>
+        <span class="pinwheel-blade"></span><span class="pinwheel-blade"></span>
+        <span class="pinwheel-hub"></span>
+      </div>
+    </div>
+    <div class="wind-orbit wind-orbit--4">
+      <div class="pinwheel pinwheel--accent pinwheel--reverse">
+        <span class="pinwheel-blade"></span><span class="pinwheel-blade"></span>
+        <span class="pinwheel-blade"></span><span class="pinwheel-blade"></span>
+        <span class="pinwheel-hub"></span>
+      </div>
+    </div>
+    <div class="wind-orbit wind-orbit--5">
+      <div class="pinwheel pinwheel--green">
+        <span class="pinwheel-blade"></span><span class="pinwheel-blade"></span>
+        <span class="pinwheel-blade"></span><span class="pinwheel-blade"></span>
+        <span class="pinwheel-hub"></span>
+      </div>
+    </div>
+  </div>
 
   <!-- ═══════════════════════════════════════════
        HEADER
@@ -189,9 +244,9 @@
     </div>
 
     <div class="toolbar-right">
-      <button type="button" id="js-toggle-theme" class="btn btn--ghost" title="Alternar tema claro/escuro">
-        <i class="fa-solid fa-moon" id="js-theme-icon"></i>
-        <span class="btn-label">Tema</span>
+      <button type="button" id="js-toggle-theme" class="btn btn--ghost theme-switcher" title="Alternar tema" aria-label="Alternar tema">
+        <i class="fa-solid fa-moon" id="js-theme-icon" aria-hidden="true"></i>
+        <span class="btn-label" id="js-theme-label">Escuro</span>
       </button>
 
       <button type="button" id="js-toggle-edit" class="btn btn--edit" title="Ativar/desativar modo edição">

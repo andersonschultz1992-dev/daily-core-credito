@@ -1,5 +1,5 @@
 /**
- * Daily Core & Crédito — app.js v7.0
+ * Daily Core & Crédito — app.js v8.0
  * "Cooperativismo Tech" · Sicredi Identity
  * ────────────────────────────────────────────
  * Arquitetura desta versão (volta à simplicidade, sem IA):
@@ -24,7 +24,7 @@
  *   qualquer daily anterior já registrada, sem recarregar a página.
  * - Removido: exportar/importar JSON (não fazem mais sentido com
  *   persistência em banco). Mantido: exportar imagem PNG, link
- *   compartilhável, tema claro/escuro, busca, ordenação, edição.
+ *   compartilhável, temas escuro, claro e cooperativo, busca, ordenação, edição.
  */
 (function () {
   'use strict';
@@ -32,7 +32,13 @@
   /* ══════════════════════════════════════
      CONSTANTES
   ══════════════════════════════════════ */
-  const LS_THEME = 'sicredi-daily-theme-v7'; // único uso de LocalStorage: preferência de tema (não é dado da daily)
+  const LS_THEME = 'sicredi-daily-theme-v8'; // único uso de LocalStorage: preferência de tema (não é dado da daily)
+  const THEMES = ['dark', 'light', 'cooperative'];
+  const THEME_INFO = {
+    dark:        { nome: 'Escuro',      icon: 'fa-solid fa-moon',     corNavegador: '#0F1B16' },
+    light:       { nome: 'Claro',       icon: 'fa-solid fa-sun',      corNavegador: '#EEF4F1' },
+    cooperative: { nome: 'Cooperativo', icon: 'fa-solid fa-seedling', corNavegador: '#146E37' },
+  };
 
   // Cor padrão (verde institucional) usada como fallback sempre que
   // um analista não tiver "corTema" definido ou o valor for inválido.
@@ -91,6 +97,8 @@
     sort:         $('#js-sort'),
     themeBtn:     $('#js-toggle-theme'),
     themeIcon:    $('#js-theme-icon'),
+    themeLabel:   $('#js-theme-label'),
+    themeColor:   $('#js-theme-color'),
     editBtn:      $('#js-toggle-edit'),
     addAnalista:  $('#js-add-analista'),
     saveBtn:      $('#js-save'),
@@ -1541,12 +1549,42 @@
     try { localStorage.setItem(chave, valor); } catch (_) { /* ignora */ }
   }
 
-  function loadTheme() { applyTheme(lsGet(LS_THEME) || 'dark'); }
-  function toggleTheme() { applyTheme(state.theme === 'dark' ? 'light' : 'dark'); lsSet(LS_THEME, state.theme); }
+  function normalizarTema(t) {
+    return THEMES.includes(t) ? t : 'dark';
+  }
+
+  function loadTheme() {
+    // Migração suave: versões antigas usavam outra chave, mas os valores
+    // dark/light continuam válidos. A preferência nova passa a ser salva na v8.
+    const salvo = lsGet(LS_THEME) || lsGet('sicredi-daily-theme-v7') || 'dark';
+    applyTheme(salvo);
+  }
+
+  function toggleTheme() {
+    const atual = THEMES.indexOf(state.theme);
+    const proximo = THEMES[(atual + 1) % THEMES.length];
+    applyTheme(proximo);
+    lsSet(LS_THEME, state.theme);
+  }
+
   function applyTheme(t) {
-    state.theme = t;
-    document.documentElement.setAttribute('data-theme', t);
-    if (ui.themeIcon) ui.themeIcon.className = t === 'dark' ? 'fa-solid fa-sun' : 'fa-solid fa-moon';
+    const tema = normalizarTema(t);
+    const info = THEME_INFO[tema];
+    const proximo = THEME_INFO[THEMES[(THEMES.indexOf(tema) + 1) % THEMES.length]];
+
+    state.theme = tema;
+    document.documentElement.setAttribute('data-theme', tema);
+    document.documentElement.style.colorScheme = tema === 'dark' ? 'dark' : 'light';
+
+    if (ui.themeIcon) ui.themeIcon.className = info.icon;
+    if (ui.themeLabel) ui.themeLabel.textContent = info.nome;
+    if (ui.themeColor) ui.themeColor.setAttribute('content', info.corNavegador);
+    if (ui.themeBtn) {
+      const dica = `Tema atual: ${info.nome}. Clique para usar ${proximo.nome}.`;
+      ui.themeBtn.title = dica;
+      ui.themeBtn.setAttribute('aria-label', dica);
+      ui.themeBtn.dataset.theme = tema;
+    }
   }
 
   /* ══════════════════════════════════════

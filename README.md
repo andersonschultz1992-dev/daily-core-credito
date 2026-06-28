@@ -5,7 +5,12 @@ DevOps · Confederação Sicredi). Aplicação **front-end estático** (HTML/CSS
 puro) publicado no **GitHub Pages**, com **Supabase** como única fonte de
 dados — sem JSON local, sem login, sem IA, sem custo de API.
 
-> **v7.0** — volta à simplicidade: a versão anterior havia experimentado
+> **v8.0** — identidade cooperativa e fundo vivo: agora a aplicação possui
+> três temas — **Escuro**, **Claro** e **Cooperativo**. O novo tema usa a
+> paleta verde Sicredi fornecida para o projeto e um fundo vetorial animado
+> inspirado em cata-ventos, sem imagens externas e com redução automática
+> de movimento para acessibilidade. A base funcional continua seguindo a
+> simplicidade da v7.0: a versão anterior havia experimentado
 > geração de destaques por IA (Anthropic/OpenAI) com painel administrativo
 > autenticado. Esta versão remove tudo isso. O destaque executivo do
 > cabeçalho agora é escolhido manualmente de uma biblioteca local com 34
@@ -41,6 +46,10 @@ Não há mais `data/analistas.json`, não há `admin.html`, não há
 
 ## 2. Como funciona (visão geral)
 
+- **Três temas visuais.** O botão de tema percorre Escuro → Claro →
+  Cooperativo. A escolha fica salva no navegador. O modo Cooperativo usa
+  `#3FA110`, `#146E37`, `#D7E6C8`, branco e amarelo como protagonistas,
+  com cata-ventos animados ao fundo.
 - **Supabase é a única fonte de dados.** Todas as dailies, analistas,
   entregas e destaques ficam em 5 tabelas (`dailies`, `analistas`,
   `entregas`, `destaques`, `destaques_cabecalho`) — ver
@@ -158,7 +167,9 @@ python -m http.server 8000
    o time) — e é neste momento que ela passa a existir no banco e a
    aparecer na Agenda. Salvar uma daily totalmente vazia não cria registro
    (o app avisa para preencher algo antes).
-7. Clique em **Imagem** para gerar o PNG da página inteira para enviar no
+7. Use o botão de tema para alternar entre **Escuro**, **Claro** e
+   **Cooperativo**.
+8. Clique em **Imagem** para gerar o PNG da página inteira para enviar no
    chat, se for o caso.
 
 ### Planejando dailies futuras / consultando passadas
@@ -367,10 +378,12 @@ roda direto no navegador.
 
 ## 11. Acessibilidade, contraste e experiência mobile
 
-### Contraste em ambos os temas
+### Contraste nos três temas
 
-O cabeçalho e o rodapé (`site-header`/`site-footer`) usam, de propósito,
-um fundo **sempre escuro** em ambos os temas claro/escuro — um padrão
+Nos temas Escuro e Claro, o cabeçalho e o rodapé (`site-header`/`site-footer`)
+usam, de propósito, um fundo escuro. No tema Cooperativo, esses elementos
+usam gradientes em verde escuro e verde Sicredi, mantendo texto branco e
+amarelo para contraste — um padrão
 comum em dashboards corporativos ("masthead" institucional). Componentes
 que vivem sobre esse fundo (toast, destaques do rodapé, seletor "Adicionar
 destaque", chips de destaque) usam cores de texto **fixas e claras**
