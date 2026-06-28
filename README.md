@@ -5,11 +5,13 @@ DevOps · Confederação Sicredi). Aplicação **front-end estático** (HTML/CSS
 puro) publicado no **GitHub Pages**, com **Supabase** como única fonte de
 dados — sem JSON local, sem login, sem IA, sem custo de API.
 
-> **v8.0** — identidade cooperativa e fundo vivo: agora a aplicação possui
+> **v8.1** — identidade cooperativa, fundo vivo e viewport responsiva: agora a aplicação possui
 > três temas — **Escuro**, **Claro** e **Cooperativo**. O novo tema usa a
 > paleta verde Sicredi fornecida para o projeto e um fundo vetorial animado
 > inspirado em cata-ventos, sem imagens externas e com redução automática
-> de movimento para acessibilidade. A base funcional continua seguindo a
+> de movimento para acessibilidade. Esta revisão também ancora o rodapé ao
+> final da viewport, elimina faixas claras em monitores altos e adiciona
+> suporte às áreas seguras e à altura dinâmica do Safari no iPhone. A base funcional continua seguindo a
 > simplicidade da v7.0: a versão anterior havia experimentado
 > geração de destaques por IA (Anthropic/OpenAI) com painel administrativo
 > autenticado. Esta versão remove tudo isso. O destaque executivo do
