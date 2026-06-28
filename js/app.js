@@ -1,5 +1,5 @@
 /**
- * Daily Core & Crédito — app.js v8.0
+ * Daily Core & Crédito — app.js v8.2
  * "Cooperativismo Tech" · Sicredi Identity
  * ────────────────────────────────────────────
  * Arquitetura desta versão (volta à simplicidade, sem IA):
@@ -25,6 +25,9 @@
  * - Removido: exportar/importar JSON (não fazem mais sentido com
  *   persistência em banco). Mantido: exportar imagem PNG, link
  *   compartilhável, temas escuro, claro e cooperativo, busca, ordenação, edição.
+ * - BLOQUEIO DE EDIÇÃO: ao entrar no modo edição, a aplicação
+ *   é reservada atomicamente no Supabase. Outro navegador recebe um
+ *   aviso e só poderá editar após salvar/sair ou o bloqueio expirar.
  */
 (function () {
   'use strict';
@@ -47,6 +50,12 @@
   // Paleta cíclica usada ao adicionar novos analistas.
   const CORES_NOVO_ANALISTA = ['#259A6C', '#357F82', '#6F8794', '#BB9748', '#3FB585'];
 
+  // Bloqueio cooperativo de edição. O TTL evita bloqueios permanentes caso
+  // o navegador seja fechado sem conseguir executar a liberação. Enquanto a
+  // edição estiver aberta, um heartbeat renova a reserva periodicamente.
+  const EDIT_LOCK_TTL_SECONDS = 120;
+  const EDIT_LOCK_HEARTBEAT_MS = 30000;
+
   /* ══════════════════════════════════════
      ESTADO
   ══════════════════════════════════════ */
@@ -60,6 +69,14 @@
     theme:     'dark',
     saving:    false,
     exporting: false,
+    editTransition: false,
+
+    editLock: {
+      ownerToken: gerarUuidSeguro(),
+      resourceKey: 'daily-core-credito-global',
+      held: false,
+      heartbeatId: null,
+    },
 
     supabase:        null,   // cliente Supabase (null = não configurado → modo demonstração)
     modoDemo:        false,  // true quando rodando sem Supabase configurado
@@ -111,6 +128,8 @@
     modalMsg:     $('#js-modal-msg'),
     modalCancel:  $('#js-modal-cancel'),
     modalConfirm: $('#js-modal-confirm'),
+    lockModal:      $('#js-lock-modal'),
+    lockModalClose: $('#js-lock-modal-close'),
     footerList:   $('#js-footer-list'),
     addDestaque:  $('#js-add-destaque'),
     toolbar:      $('#js-toolbar'),
@@ -1042,15 +1061,53 @@
   }
 
   /* ══════════════════════════════════════
-     MODO EDIÇÃO
+     MODO EDIÇÃO + BLOQUEIO COOPERATIVO
   ══════════════════════════════════════ */
-  function toggleEditMode() {
-    state.editMode = !state.editMode;
+  async function toggleEditMode() {
+    if (state.editTransition || state.saving) return;
+
+    state.editTransition = true;
+    const wasEditing = state.editMode;
+    const htmlOriginal = ui.editBtn.innerHTML;
+    ui.editBtn.disabled = true;
+    ui.editBtn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i><span class="btn-label">Verificando...</span>';
+
+    try {
+      if (state.editMode) {
+        const dailyId = state.currentDailyId;
+        const dailyDate = state.dados && state.dados.dataDailyISO;
+        aplicarModoEdicao(false);
+        await liberarBloqueioEdicao();
+        await restaurarDailyAposCancelamento(dailyId, dailyDate);
+        showToast('👁️ Edição encerrada — alterações não salvas foram descartadas.');
+        return;
+      }
+
+      const adquirido = await adquirirBloqueioEdicao();
+      if (!adquirido) {
+        mostrarModalBloqueio();
+        return;
+      }
+
+      aplicarModoEdicao(true);
+      showToast('🔒 Modo edição ativado — a aplicação está bloqueada para outras pessoas.');
+    } finally {
+      state.editTransition = false;
+      ui.editBtn.disabled = false;
+      // aplicarModoEdicao já define o conteúdo correto; em falhas antes
+      // da mudança, restaura o HTML original do botão.
+      if (state.editMode === wasEditing) ui.editBtn.innerHTML = htmlOriginal;
+    }
+  }
+
+  function aplicarModoEdicao(enabled) {
+    state.editMode = Boolean(enabled);
     document.body.classList.toggle('edit-mode', state.editMode);
 
     ui.editBtn.classList.toggle('active', state.editMode);
-    ui.editBtn.querySelector('.btn-label').textContent =
-      state.editMode ? 'Sair Edição' : 'Editar';
+    ui.editBtn.innerHTML = state.editMode
+      ? '<i class="fa-solid fa-lock-open"></i><span class="btn-label">Sair Edição</span>'
+      : '<i class="fa-solid fa-pen-to-square"></i><span class="btn-label">Editar</span>';
 
     document.querySelectorAll('.edit-only').forEach(el =>
       el.classList.toggle('hidden', !state.editMode)
@@ -1060,15 +1117,169 @@
       if (el) el.contentEditable = state.editMode ? 'true' : 'false';
     });
 
-    applyEditStateToAll(state.editMode);
-    bindFooterEvents(); // reaplica contentEditable nos destaques do rodapé
-    filtrarEOrdenar();  // reconstrói os cards (badge vazio só aparece em Modo Edição)
+    // Impede trocar de daily enquanto uma edição está em andamento. Isso
+    // garante que o bloqueio continue sempre associado à data exibida.
+    if (ui.dateSelect) ui.dateSelect.disabled = state.editMode || state.modoDemo;
+    if (ui.datePickerBtn) ui.datePickerBtn.disabled = state.editMode;
+    if (ui.historico) ui.historico.classList.toggle('historico--locked', state.editMode);
+    if (ui.historicoFab) ui.historicoFab.disabled = state.editMode;
 
-    showToast(
-      state.editMode
-        ? '✏️ Modo edição ativado — clique nos textos para editar.'
-        : '👁️ Modo visualização ativado.'
+    applyEditStateToAll(state.editMode);
+    bindFooterEvents();
+    filtrarEOrdenar();
+  }
+
+  async function adquirirBloqueioEdicao() {
+    if (state.modoDemo || !state.supabase) return true;
+    try {
+      const { data, error } = await state.supabase.rpc('acquire_app_edit_lock', {
+        p_lock_key: state.editLock.resourceKey,
+        p_owner_token: state.editLock.ownerToken,
+        p_ttl_seconds: EDIT_LOCK_TTL_SECONDS,
+      });
+      if (error) throw error;
+      if (data !== true) return false;
+
+      state.editLock.held = true;
+      iniciarHeartbeatBloqueio();
+      return true;
+    } catch (err) {
+      console.error('[Bloqueio] Falha ao adquirir:', err);
+      const funcaoAusente = err && (err.code === 'PGRST202' || String(err.message || '').includes('acquire_app_edit_lock'));
+      showToast(funcaoAusente
+        ? '⚠️ O bloqueio de edição ainda não foi instalado no Supabase. Execute o arquivo supabase/migration-edit-lock.sql.'
+        : '❌ Não foi possível verificar o bloqueio de edição. Confira a conexão e tente novamente.', 7500);
+      return false;
+    }
+  }
+
+  function iniciarHeartbeatBloqueio() {
+    pararHeartbeatBloqueio();
+    state.editLock.heartbeatId = window.setInterval(async () => {
+      if (!state.editMode || !state.editLock.held) return;
+      const resultado = await renovarBloqueioEdicao();
+      if (resultado === false) tratarBloqueioPerdido();
+    }, EDIT_LOCK_HEARTBEAT_MS);
+  }
+
+  function pararHeartbeatBloqueio() {
+    if (state.editLock.heartbeatId) window.clearInterval(state.editLock.heartbeatId);
+    state.editLock.heartbeatId = null;
+  }
+
+  /** Retorna true quando renovado, false quando a posse foi perdida e
+   *  null em falha transitória de rede (o próximo heartbeat tentará de novo). */
+  async function renovarBloqueioEdicao() {
+    if (state.modoDemo || !state.supabase) return true;
+    if (!state.editLock.held) return false;
+    try {
+      const { data, error } = await state.supabase.rpc('renew_app_edit_lock', {
+        p_lock_key: state.editLock.resourceKey,
+        p_owner_token: state.editLock.ownerToken,
+        p_ttl_seconds: EDIT_LOCK_TTL_SECONDS,
+      });
+      if (error) throw error;
+      return data === true;
+    } catch (err) {
+      console.warn('[Bloqueio] Falha transitória ao renovar:', err);
+      return null;
+    }
+  }
+
+  async function confirmarBloqueioAntesDeSalvar() {
+    if (state.modoDemo || !state.supabase) return true;
+    const resultado = await renovarBloqueioEdicao();
+    if (resultado === true) return true;
+    if (resultado === false) {
+      tratarBloqueioPerdido();
+    } else {
+      showToast('⚠️ Não foi possível confirmar o bloqueio. Verifique a conexão antes de salvar.', 6500);
+    }
+    return false;
+  }
+
+  async function liberarBloqueioEdicao() {
+    pararHeartbeatBloqueio();
+    if (state.modoDemo || !state.supabase || !state.editLock.held) {
+      state.editLock.held = false;
+      return;
+    }
+
+    state.editLock.held = false;
+    try {
+      const { error } = await state.supabase.rpc('release_app_edit_lock', {
+        p_lock_key: state.editLock.resourceKey,
+        p_owner_token: state.editLock.ownerToken,
+      });
+      if (error) throw error;
+    } catch (err) {
+      // O TTL liberará automaticamente em até 2 minutos caso a chamada
+      // falhe (por exemplo, fechamento abrupto ou perda de conexão).
+      console.warn('[Bloqueio] Não foi possível liberar imediatamente:', err);
+    }
+  }
+
+  function liberarBloqueioKeepalive() {
+    if (!state.editLock.held) return;
+    const cfg = window.SUPABASE_CONFIG;
+    if (!cfg || !cfg.url || !cfg.anonKey) return;
+    const url = cfg.url.replace(/\/$/, '') + '/rest/v1/rpc/release_app_edit_lock';
+    const body = JSON.stringify({
+      p_lock_key: state.editLock.resourceKey,
+      p_owner_token: state.editLock.ownerToken,
+    });
+    try {
+      fetch(url, {
+        method: 'POST',
+        headers: {
+          apikey: cfg.anonKey,
+          Authorization: 'Bearer ' + cfg.anonKey,
+          'Content-Type': 'application/json',
+        },
+        body,
+        keepalive: true,
+      }).catch(() => {});
+    } catch (_) {}
+  }
+
+  function tratarBloqueioPerdido() {
+    const dailyId = state.currentDailyId;
+    const dailyDate = state.dados && state.dados.dataDailyISO;
+    pararHeartbeatBloqueio();
+    state.editLock.held = false;
+    if (state.editMode) aplicarModoEdicao(false);
+    restaurarDailyAposCancelamento(dailyId, dailyDate).catch(err =>
+      console.warn('[Bloqueio] Não foi possível recarregar a daily após perda do lock:', err)
     );
+    showToast('⚠️ O bloqueio global da edição expirou ou foi perdido. As alterações locais foram descartadas.', 8000);
+  }
+
+  async function restaurarDailyAposCancelamento(dailyId, dailyDate) {
+    if (state.modoDemo || !state.supabase) {
+      processarDados();
+      return;
+    }
+    try {
+      if (dailyId) await carregarDailyPorId(dailyId);
+      else if (dailyDate) await montarRascunhoDaily(dailyDate);
+    } catch (err) {
+      console.warn('[Edição] Falha ao restaurar dados do banco:', err);
+      showToast('⚠️ Edição encerrada, mas não foi possível recarregar os dados. Atualize a página.', 7000);
+    }
+  }
+
+  function mostrarModalBloqueio() {
+    if (!ui.lockModal) {
+      showToast('🔒 Alguém já está editando a aplicação. Tente novamente em instantes.', 7500);
+      return;
+    }
+    ui.lockModal.classList.remove('hidden');
+    ui.lockModalClose?.focus();
+  }
+
+  function fecharModalBloqueio() {
+    ui.lockModal?.classList.add('hidden');
+    ui.editBtn?.focus();
   }
 
   function applyEditStateToAll(enabled) {
@@ -1099,6 +1310,12 @@
       showToast('⚠️ Configure o Supabase em js/config.js para salvar permanentemente. As alterações desta sessão não serão mantidas ao recarregar a página.');
       return;
     }
+
+    if (!state.editMode || !state.editLock.held) {
+      showToast('🔒 Entre no modo edição e obtenha o bloqueio antes de salvar.');
+      return;
+    }
+    if (!await confirmarBloqueioAntesDeSalvar()) return;
 
     // Antes de gravar, captura edições pendentes dos campos do cabeçalho
     // para que a checagem de conteúdo abaixo enxergue o estado atual.
@@ -1231,7 +1448,9 @@
       processarDados();
       renderHistorico();
       renderDateSelector();
-      showToast('💾 Dados salvos com sucesso!');
+      aplicarModoEdicao(false);
+      await liberarBloqueioEdicao();
+      showToast('💾 Dados salvos com sucesso! Bloqueio de edição liberado.');
     } catch (err) {
       console.error('Erro ao salvar:', err);
       showToast('❌ Erro ao salvar — verifique sua conexão e tente novamente.');
@@ -1260,6 +1479,10 @@
       showToast('⚠️ Configure o Supabase em js/config.js para excluir dailies.');
       return;
     }
+    if (!state.editMode || !state.editLock.held || !await confirmarBloqueioAntesDeSalvar()) {
+      showToast('🔒 Obtenha o bloqueio de edição antes de excluir esta daily.');
+      return;
+    }
 
     const d = state.dados;
 
@@ -1285,7 +1508,9 @@
           // Remove da lista/agenda em memória (mantém histórico íntegro).
           state.dailiesLista = state.dailiesLista.filter(x => x.id !== idAlvo);
 
-          showToast('🗑️ Daily excluída com sucesso.');
+          aplicarModoEdicao(false);
+          await liberarBloqueioEdicao();
+          showToast('🗑️ Daily excluída com sucesso. Bloqueio liberado.');
 
           // Navega para uma daily ainda existente: a de hoje se houver,
           // senão a mais recente; se o banco ficou vazio, monta rascunho
@@ -1807,7 +2032,21 @@
     });
     ui.modal.addEventListener('click', (e) => { if (e.target === ui.modal) closeModal(); });
 
+    if (ui.lockModalClose) ui.lockModalClose.addEventListener('click', fecharModalBloqueio);
+    if (ui.lockModal) ui.lockModal.addEventListener('click', (e) => { if (e.target === ui.lockModal) fecharModalBloqueio(); });
+
+    // pagehide funciona melhor que beforeunload no Safari/iPhone. A
+    // requisição keepalive tenta liberar já; o TTL é a garantia final.
+    window.addEventListener('pagehide', liberarBloqueioKeepalive);
+    window.addEventListener('beforeunload', liberarBloqueioKeepalive);
+    document.addEventListener('visibilitychange', async () => {
+      if (document.visibilityState !== 'visible' || !state.editMode || !state.editLock.held) return;
+      const resultado = await renovarBloqueioEdicao();
+      if (resultado === false) tratarBloqueioPerdido();
+    });
+
     document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape' && ui.lockModal && !ui.lockModal.classList.contains('hidden')) { e.preventDefault(); fecharModalBloqueio(); return; }
       if (e.key === 'Escape' && ui.iconPicker && !ui.iconPicker.classList.contains('hidden')) { e.preventDefault(); fecharSeletorIcone(); return; }
       if (e.key === 'Escape' && !ui.modal.classList.contains('hidden')) { e.preventDefault(); closeModal(); return; }
       if ((e.ctrlKey || e.metaKey) && e.key === 's') { e.preventDefault(); if (state.editMode) salvar(); }
@@ -1823,6 +2062,20 @@
   /* ══════════════════════════════════════
      UTILS
   ══════════════════════════════════════ */
+  function gerarUuidSeguro() {
+    if (window.crypto && typeof window.crypto.randomUUID === 'function') return window.crypto.randomUUID();
+    const bytes = new Uint8Array(16);
+    if (window.crypto && typeof window.crypto.getRandomValues === 'function') {
+      window.crypto.getRandomValues(bytes);
+    } else {
+      for (let i = 0; i < bytes.length; i++) bytes[i] = Math.floor(Math.random() * 256);
+    }
+    bytes[6] = (bytes[6] & 0x0f) | 0x40;
+    bytes[8] = (bytes[8] & 0x3f) | 0x80;
+    const hex = Array.from(bytes, b => b.toString(16).padStart(2, '0')).join('');
+    return `${hex.slice(0,8)}-${hex.slice(8,12)}-${hex.slice(12,16)}-${hex.slice(16,20)}-${hex.slice(20)}`;
+  }
+
   function getByUid(uid) { return state.analistas.find(a => a._uid === uid) || null; }
 
   let _uidCounter = 0;

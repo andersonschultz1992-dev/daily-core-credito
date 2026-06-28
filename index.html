@@ -354,6 +354,23 @@
     </div>
   </div>
 
+  <!-- MODAL DE BLOQUEIO DE EDIÇÃO -->
+  <div class="modal-overlay hidden" id="js-lock-modal" role="alertdialog" aria-modal="true" aria-labelledby="js-lock-modal-title" aria-describedby="js-lock-modal-text">
+    <div class="modal-box lock-modal-box">
+      <div class="modal-accent-bar"></div>
+      <div class="lock-modal-content">
+        <div class="lock-modal-icon" aria-hidden="true"><i class="fa-solid fa-user-lock"></i></div>
+        <p class="lock-modal-title" id="js-lock-modal-title">Edição temporariamente indisponível</p>
+        <p class="lock-modal-text" id="js-lock-modal-text">
+          Alguém já está editando a aplicação. Aguarde o salvamento ou o encerramento da edição e tente novamente em instantes.
+        </p>
+      </div>
+      <div class="modal-actions">
+        <button type="button" class="btn btn--primary" id="js-lock-modal-close">Entendi</button>
+      </div>
+    </div>
+  </div>
+
   <!-- MODAL SELETOR DE ÍCONE (badge/indicador dos analistas) -->
   <div class="modal-overlay hidden" id="js-icon-picker" role="dialog" aria-modal="true" aria-labelledby="js-icon-picker-title">
     <div class="modal-box icon-picker-box">

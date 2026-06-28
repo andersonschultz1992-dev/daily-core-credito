@@ -5,7 +5,7 @@ DevOps · Confederação Sicredi). Aplicação **front-end estático** (HTML/CSS
 puro) publicado no **GitHub Pages**, com **Supabase** como única fonte de
 dados — sem JSON local, sem login, sem IA, sem custo de API.
 
-> **v8.1** — identidade cooperativa, fundo vivo e viewport responsiva: agora a aplicação possui
+> **v8.2** — bloqueio global de edição, identidade cooperativa, fundo vivo e viewport responsiva: agora a aplicação possui
 > três temas — **Escuro**, **Claro** e **Cooperativo**. O novo tema usa a
 > paleta verde Sicredi fornecida para o projeto e um fundo vetorial animado
 > inspirado em cata-ventos, sem imagens externas e com redução automática
@@ -38,7 +38,8 @@ dados — sem JSON local, sem login, sem IA, sem custo de API.
 │   ├── fotos/             ← fotos padrão dos analistas
 │   └── img/                 ← logo Sicredi (opcional)
 └── supabase/
-    └── schema.sql            ← SQL completo: tabelas, índices, RLS, seed
+    ├── schema.sql            ← SQL completo: tabelas, índices e RLS
+    └── migration-edit-lock.sql ← migração do bloqueio para bancos existentes
 ```
 
 Não há mais `data/analistas.json`, não há `admin.html`, não há
@@ -53,9 +54,15 @@ Não há mais `data/analistas.json`, não há `admin.html`, não há
   `#3FA110`, `#146E37`, `#D7E6C8`, branco e amarelo como protagonistas,
   com cata-ventos animados ao fundo.
 - **Supabase é a única fonte de dados.** Todas as dailies, analistas,
-  entregas e destaques ficam em 5 tabelas (`dailies`, `analistas`,
-  `entregas`, `destaques`, `destaques_cabecalho`) — ver
+  entregas, destaques e bloqueios ficam em 6 tabelas (`dailies`,
+  `analistas`, `entregas`, `destaques`, `destaques_cabecalho`,
+  `app_edit_locks`) — ver
   `supabase/schema.sql`.
+- **Bloqueio global de edição.** Ao clicar em **Editar**, o navegador
+  adquire uma reserva atômica no Supabase. Enquanto ela estiver ativa,
+  qualquer outra pessoa recebe um aviso para tentar novamente em
+  instantes. O bloqueio é liberado ao salvar ou sair da edição e possui
+  expiração automática para fechamentos abruptos.
 - **Sem login.** Qualquer pessoa que abrir o link do app pode clicar em
   **Editar**, alterar o que quiser e **Salvar** — sem usuário, sem senha.
   É o mesmo nível de confiança que já existia quando os dados ficavam só
@@ -445,3 +452,7 @@ comuns em produção:
   protegendo contra XSS mesmo que algum valor malicioso seja gravado nas
   tabelas. Como não há autenticação (ver seção 9), essa sanitização na
   leitura é a principal barreira — mantenha-a ao editar o código.
+
+## Bloqueio de edição (v8.2)
+
+Antes de publicar esta versão em um ambiente que já possui o banco criado, execute no SQL Editor do Supabase o arquivo `supabase/migration-edit-lock.sql`. Ele cria o bloqueio global atômico, com renovação automática e expiração de segurança em 120 segundos.

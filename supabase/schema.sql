@@ -1,5 +1,5 @@
 -- ================================================================
--- DAILY CORE & CRÉDITO — Schema Supabase v3.0 (sem IA, sem login)
+-- DAILY CORE & CRÉDITO — Schema Supabase v4.0 (sem IA, sem login)
 -- Confederação Sicredi · Time DevOps Core & Crédito
 --
 -- Execute no SQL Editor do seu projeto Supabase.
@@ -15,6 +15,7 @@
 --     escolhidos de uma biblioteca local pré-definida (ver
 --     js/destaques.js) — não há geração nem chamada externa
 --     nenhuma envolvida. Ver tabela destaques_cabecalho.
+--   - v4.0: bloqueio cooperativo, global e atômico de edição.
 --   - v3.0: suporte a MÚLTIPLOS destaques no cabeçalho (antes era
 --     apenas 1, guardado direto em colunas de "dailies"). Quem já
 --     tinha o schema v2.0 em produção: este script migra os dados
@@ -39,6 +40,18 @@ CREATE TABLE IF NOT EXISTS public.dailies (
   updated_at      TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 COMMENT ON TABLE public.dailies IS 'Cada registro representa uma reunião Daily do time DevOps, uma por data.';
+
+-- Bloqueio temporário GLOBAL para toda a aplicação. A chave primária
+-- garante uma única reserva ativa; funções RPC abaixo fazem aquisição,
+-- renovação e liberação de forma atômica.
+CREATE TABLE IF NOT EXISTS public.app_edit_locks (
+  lock_key     TEXT        PRIMARY KEY,
+  owner_token  UUID        NOT NULL,
+  expires_at   TIMESTAMPTZ NOT NULL,
+  created_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at   TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+COMMENT ON TABLE public.app_edit_locks IS 'Bloqueio global temporário do modo edição da aplicação. Registros expirados podem ser assumidos atomicamente por outro navegador.';
 
 -- Analistas: membros do time em cada daily (roster do dia)
 CREATE TABLE IF NOT EXISTS public.analistas (
@@ -137,6 +150,7 @@ $$;
 -- ÍNDICES
 -- ================================================================
 CREATE INDEX IF NOT EXISTS idx_dailies_data      ON public.dailies(data_daily DESC);
+CREATE INDEX IF NOT EXISTS idx_app_edit_locks_expires ON public.app_edit_locks(expires_at);
 CREATE INDEX IF NOT EXISTS idx_analistas_daily   ON public.analistas(daily_id, ordem);
 CREATE INDEX IF NOT EXISTS idx_entregas_analista ON public.entregas(analista_id, ordem);
 CREATE INDEX IF NOT EXISTS idx_entregas_daily    ON public.entregas(daily_id);
@@ -182,6 +196,94 @@ CREATE TRIGGER trg_limitar_destaques_cabecalho
   FOR EACH ROW EXECUTE FUNCTION public.fn_limitar_destaques_cabecalho();
 
 -- ================================================================
+-- RPCs: BLOQUEIO COOPERATIVO DE EDIÇÃO
+-- ----------------------------------------------------------------
+-- A aquisição usa INSERT ... ON CONFLICT ... WHERE, portanto dois
+-- clientes que clicarem em "Editar" simultaneamente não conseguem
+-- obter o mesmo bloqueio global. Somente o proprietário pode renovar/liberar.
+-- SECURITY DEFINER permite manter a tabela de locks sem escrita direta.
+-- ================================================================
+CREATE OR REPLACE FUNCTION public.acquire_app_edit_lock(
+  p_lock_key TEXT,
+  p_owner_token UUID,
+  p_ttl_seconds INTEGER DEFAULT 120
+)
+RETURNS BOOLEAN
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  v_rows INTEGER;
+  v_ttl INTEGER := LEAST(GREATEST(COALESCE(p_ttl_seconds, 120), 30), 600);
+BEGIN
+  INSERT INTO public.app_edit_locks AS current_lock (lock_key, owner_token, expires_at, created_at, updated_at)
+  VALUES (p_lock_key, p_owner_token, now() + make_interval(secs => v_ttl), now(), now())
+  ON CONFLICT (lock_key) DO UPDATE
+    SET owner_token = EXCLUDED.owner_token,
+        expires_at  = EXCLUDED.expires_at,
+        updated_at  = now()
+    WHERE current_lock.owner_token = EXCLUDED.owner_token
+       OR current_lock.expires_at <= now();
+
+  GET DIAGNOSTICS v_rows = ROW_COUNT;
+  RETURN v_rows > 0;
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION public.renew_app_edit_lock(
+  p_lock_key TEXT,
+  p_owner_token UUID,
+  p_ttl_seconds INTEGER DEFAULT 120
+)
+RETURNS BOOLEAN
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  v_rows INTEGER;
+  v_ttl INTEGER := LEAST(GREATEST(COALESCE(p_ttl_seconds, 120), 30), 600);
+BEGIN
+  UPDATE public.app_edit_locks
+     SET expires_at = now() + make_interval(secs => v_ttl),
+         updated_at = now()
+   WHERE lock_key = p_lock_key
+     AND owner_token = p_owner_token
+     AND expires_at > now();
+  GET DIAGNOSTICS v_rows = ROW_COUNT;
+  RETURN v_rows > 0;
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION public.release_app_edit_lock(
+  p_lock_key TEXT,
+  p_owner_token UUID
+)
+RETURNS BOOLEAN
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  v_rows INTEGER;
+BEGIN
+  DELETE FROM public.app_edit_locks
+   WHERE lock_key = p_lock_key
+     AND owner_token = p_owner_token;
+  GET DIAGNOSTICS v_rows = ROW_COUNT;
+  RETURN v_rows > 0;
+END;
+$$;
+
+REVOKE ALL ON FUNCTION public.acquire_app_edit_lock(TEXT, UUID, INTEGER) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.renew_app_edit_lock(TEXT, UUID, INTEGER) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.release_app_edit_lock(TEXT, UUID) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION public.acquire_app_edit_lock(TEXT, UUID, INTEGER) TO anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.renew_app_edit_lock(TEXT, UUID, INTEGER) TO anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.release_app_edit_lock(TEXT, UUID) TO anon, authenticated;
+
+-- ================================================================
 -- ROW LEVEL SECURITY (RLS) — ABERTO, SEM AUTENTICAÇÃO
 -- ----------------------------------------------------------------
 -- Por requisito explícito do projeto, NÃO há sistema de login: o
@@ -199,6 +301,9 @@ CREATE TRIGGER trg_limitar_destaques_cabecalho
 -- `USING (auth.role() = 'authenticated')` e habilitar login no
 -- Supabase Authentication.
 -- ================================================================
+ALTER TABLE public.app_edit_locks ENABLE ROW LEVEL SECURITY;
+REVOKE ALL ON TABLE public.app_edit_locks FROM anon, authenticated;
+
 ALTER TABLE public.dailies   ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.analistas ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.entregas  ENABLE ROW LEVEL SECURITY;

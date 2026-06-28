@@ -2368,3 +2368,41 @@ body.is-exporting .cooperative-wind-bg { display: none; }
     transform: translateZ(0);
   }
 }
+
+/* ══════════════════════════════════════
+   BLOQUEIO COOPERATIVO DE EDIÇÃO
+══════════════════════════════════════ */
+.lock-modal-box { max-width: 480px; }
+.lock-modal-content { padding: 28px 28px 18px; text-align: center; }
+.lock-modal-icon {
+  width: 58px;
+  height: 58px;
+  margin: 0 auto 16px;
+  border-radius: 18px;
+  display: grid;
+  place-items: center;
+  font-size: 24px;
+  color: var(--green-400);
+  background: color-mix(in srgb, var(--green-400) 14%, transparent);
+  border: 1px solid color-mix(in srgb, var(--green-400) 28%, transparent);
+}
+.lock-modal-title {
+  margin: 0 0 9px;
+  color: var(--text-primary);
+  font-size: 1.08rem;
+  font-weight: 800;
+}
+.lock-modal-text {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: .94rem;
+  line-height: 1.65;
+}
+.historico--locked { pointer-events: none; opacity: .58; }
+button:disabled, select:disabled { cursor: not-allowed; }
+
+@media (max-width: 480px) {
+  .lock-modal-content { padding: 24px 20px 14px; }
+  .lock-modal-icon { width: 52px; height: 52px; border-radius: 16px; }
+}
+
