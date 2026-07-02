@@ -2406,3 +2406,18 @@ button:disabled, select:disabled { cursor: not-allowed; }
   .lock-modal-icon { width: 52px; height: 52px; border-radius: 16px; }
 }
 
+
+/* v8.3 — exportação estável em desktop e Safari/iOS.
+   Elementos fixos/animados são decorativos e podem ampliar ou invalidar
+   a área calculada pelo html2canvas em páginas longas. */
+body.is-exporting .cooperative-wind-bg,
+body.is-exporting .wind-orbit,
+body.is-exporting .pinwheel {
+  display: none !important;
+  animation: none !important;
+}
+
+body.is-exporting {
+  overflow-x: hidden !important;
+  min-height: 0 !important;
+}

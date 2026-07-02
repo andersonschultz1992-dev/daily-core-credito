@@ -5,7 +5,7 @@ DevOps · Confederação Sicredi). Aplicação **front-end estático** (HTML/CSS
 puro) publicado no **GitHub Pages**, com **Supabase** como única fonte de
 dados — sem JSON local, sem login, sem IA, sem custo de API.
 
-> **v8.2** — bloqueio global de edição, identidade cooperativa, fundo vivo e viewport responsiva: agora a aplicação possui
+> **v8.3** — bloqueio global de edição, identidade cooperativa, fundo vivo e viewport responsiva: agora a aplicação possui
 > três temas — **Escuro**, **Claro** e **Cooperativo**. O novo tema usa a
 > paleta verde Sicredi fornecida para o projeto e um fundo vetorial animado
 > inspirado em cata-ventos, sem imagens externas e com redução automática
@@ -453,6 +453,6 @@ comuns em produção:
   tabelas. Como não há autenticação (ver seção 9), essa sanitização na
   leitura é a principal barreira — mantenha-a ao editar o código.
 
-## Bloqueio de edição (v8.2)
+## Bloqueio de edição (v8.3)
 
 Antes de publicar esta versão em um ambiente que já possui o banco criado, execute no SQL Editor do Supabase o arquivo `supabase/migration-edit-lock.sql`. Ele cria o bloqueio global atômico, com renovação automática e expiração de segurança em 120 segundos.
