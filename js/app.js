@@ -1,5 +1,5 @@
 /**
- * Daily Core & Crédito — app.js v8.3
+ * Daily Core & Crédito — app.js v8.4
  * "Cooperativismo Tech" · Sicredi Identity
  * ────────────────────────────────────────────
  * Arquitetura desta versão (volta à simplicidade, sem IA):
@@ -1567,40 +1567,190 @@
   /* ══════════════════════════════════════
      EXPORTAR IMAGEM (PNG)
   ══════════════════════════════════════ */
+  function promiseComTimeout(promise, timeoutMs, fallback = null) {
+    return Promise.race([
+      Promise.resolve(promise).catch(() => fallback),
+      new Promise(resolve => window.setTimeout(() => resolve(fallback), timeoutMs)),
+    ]);
+  }
+
+  function blobParaDataURL(blob) {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onerror = () => reject(reader.error || new Error('Falha ao converter imagem.'));
+      reader.onload = () => resolve(reader.result);
+      reader.readAsDataURL(blob);
+    });
+  }
+
+  function aguardarImagem(img, timeoutMs = 1800) {
+    if (img.complete) return Promise.resolve(img.naturalWidth > 0);
+    return new Promise(resolve => {
+      let encerrado = false;
+      const concluir = ok => {
+        if (encerrado) return;
+        encerrado = true;
+        img.removeEventListener('load', onLoad);
+        img.removeEventListener('error', onError);
+        window.clearTimeout(timer);
+        resolve(ok);
+      };
+      const onLoad = () => concluir(img.naturalWidth > 0);
+      const onError = () => concluir(false);
+      const timer = window.setTimeout(() => concluir(false), timeoutMs);
+      img.addEventListener('load', onLoad, { once: true });
+      img.addEventListener('error', onError, { once: true });
+    });
+  }
+
+  function criarPlaceholderImagem(texto = '', largura = 160, altura = 160) {
+    const canvas = document.createElement('canvas');
+    canvas.width = Math.max(64, Math.min(320, Number(largura) || 160));
+    canvas.height = Math.max(64, Math.min(320, Number(altura) || 160));
+    const ctx = canvas.getContext('2d');
+    const iniciais = String(texto || '?')
+      .trim()
+      .split(/\s+/)
+      .filter(Boolean)
+      .slice(0, 2)
+      .map(parte => parte.charAt(0).toUpperCase())
+      .join('') || '?';
+
+    const grad = ctx.createLinearGradient(0, 0, canvas.width, canvas.height);
+    grad.addColorStop(0, '#3FA110');
+    grad.addColorStop(1, '#146E37');
+    ctx.fillStyle = grad;
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.fillStyle = '#FFFFFF';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.font = `800 ${Math.round(Math.min(canvas.width, canvas.height) * 0.32)}px Arial, sans-serif`;
+    ctx.fillText(iniciais, canvas.width / 2, canvas.height / 2);
+    return canvas.toDataURL('image/png');
+  }
+
   /**
-   * Converte e baixa o canvas sem depender exclusivamente de toDataURL.
-   * Safari/iOS costuma ser mais estável com toBlob e URL temporária.
+   * Deixa todas as imagens em um estado previsível antes da captura.
+   * Fotos externas são incorporadas como data URL quando o servidor
+   * permite CORS. Quando isso não é possível, usamos um placeholder
+   * local para impedir que uma única foto invalide todo o canvas.
+   */
+  async function prepararImagensParaExportacao() {
+    const restauracoes = [];
+    const imagens = Array.from(document.images);
+
+    for (const img of imagens) {
+      const original = {
+        el: img,
+        src: img.getAttribute('src'),
+        srcset: img.getAttribute('srcset'),
+        loading: img.getAttribute('loading'),
+        crossOrigin: img.getAttribute('crossorigin'),
+      };
+      restauracoes.push(original);
+
+      img.setAttribute('loading', 'eager');
+      img.removeAttribute('srcset');
+
+      const src = img.currentSrc || img.getAttribute('src') || '';
+      let url = null;
+      try { url = new URL(src, window.location.href); } catch (_) {}
+
+      const ehHttpExterno = Boolean(
+        url &&
+        (url.protocol === 'http:' || url.protocol === 'https:') &&
+        url.origin !== window.location.origin
+      );
+
+      if (ehHttpExterno) {
+        try {
+          const controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
+          const timer = window.setTimeout(() => controller?.abort(), 2600);
+          const resposta = await fetch(url.href, {
+            mode: 'cors',
+            credentials: 'omit',
+            cache: 'force-cache',
+            signal: controller?.signal,
+          });
+          window.clearTimeout(timer);
+          if (!resposta.ok) throw new Error(`HTTP ${resposta.status}`);
+          const blob = await resposta.blob();
+          if (!String(blob.type || '').startsWith('image/')) throw new Error('Conteúdo externo não é imagem.');
+          img.src = await blobParaDataURL(blob);
+        } catch (err) {
+          console.warn('[Exportação] Foto externa substituída por placeholder:', src, err);
+          img.src = criarPlaceholderImagem(img.alt, img.width || 160, img.height || 160);
+        }
+      }
+
+      const carregou = await aguardarImagem(img, 1800);
+      if (!carregou) {
+        img.src = criarPlaceholderImagem(img.alt, img.width || 160, img.height || 160);
+        await aguardarImagem(img, 500);
+      }
+    }
+
+    return () => {
+      restauracoes.forEach(({ el, src, srcset, loading, crossOrigin }) => {
+        if (!el || !el.isConnected) return;
+        if (src === null) el.removeAttribute('src'); else el.setAttribute('src', src);
+        if (srcset === null) el.removeAttribute('srcset'); else el.setAttribute('srcset', srcset);
+        if (loading === null) el.removeAttribute('loading'); else el.setAttribute('loading', loading);
+        if (crossOrigin === null) el.removeAttribute('crossorigin'); else el.setAttribute('crossorigin', crossOrigin);
+      });
+    };
+  }
+
+  async function aguardarFontesParaExportacao() {
+    if (!document.fonts || !document.fonts.ready) return;
+    // Uma fonte remota indisponível não pode travar indefinidamente a exportação.
+    await promiseComTimeout(document.fonts.ready, 1800, null);
+  }
+
+  /**
+   * Converte e baixa o canvas. Caso toBlob exista, mas devolva null
+   * (comportamento observado em Safari/Firefox sob pressão de memória),
+   * tenta automaticamente o caminho alternativo via toDataURL.
    */
   async function baixarCanvasComoPng(canvas, nomeArquivo) {
+    const converterViaDataURL = () => dataURLParaBlob(canvas.toDataURL('image/png', 1.0));
+
     const blob = await new Promise((resolve, reject) => {
       if (typeof canvas.toBlob !== 'function') {
-        try {
-          const dataUrl = canvas.toDataURL('image/png', 1.0);
-          resolve(dataURLParaBlob(dataUrl));
-        } catch (err) {
-          reject(err);
-        }
+        try { resolve(converterViaDataURL()); }
+        catch (err) { reject(err); }
         return;
       }
 
-      canvas.toBlob(
-        blobGerado => blobGerado ? resolve(blobGerado) : reject(new Error('O navegador não conseguiu converter a captura em PNG.')),
-        'image/png',
-        1.0
-      );
+      try {
+        canvas.toBlob(blobGerado => {
+          if (blobGerado) {
+            resolve(blobGerado);
+            return;
+          }
+          try { resolve(converterViaDataURL()); }
+          catch (err) { reject(err); }
+        }, 'image/png', 1.0);
+      } catch (err) {
+        try { resolve(converterViaDataURL()); }
+        catch (_) { reject(err); }
+      }
     });
+
+    if (!blob || !blob.size) throw new Error('O navegador gerou um arquivo PNG vazio.');
 
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.download = nomeArquivo;
     link.href = url;
+    link.rel = 'noopener';
     link.style.display = 'none';
     document.body.appendChild(link);
     link.click();
     link.remove();
 
-    // Revogar imediatamente pode cancelar o download no Safari.
-    window.setTimeout(() => URL.revokeObjectURL(url), 1500);
+    // Revogar cedo demais cancela o download em Safari/iOS e Firefox.
+    window.setTimeout(() => URL.revokeObjectURL(url), 10000);
   }
 
   function dataURLParaBlob(dataUrl) {
@@ -1612,18 +1762,130 @@
     return new Blob([array], { type: mime });
   }
 
+  function ambienteCanvasRestrito() {
+    const ua = navigator.userAgent || '';
+    const iOS = /iPad|iPhone|iPod/.test(ua) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+    const safari = /^((?!chrome|android|crios|fxios|edgios).)*safari/i.test(ua);
+    return { iOS, safari };
+  }
+
   /**
-   * Define uma escala segura conforme as dimensões da página.
-   * Evita ultrapassar os limites de dimensão/área de canvas do Safari,
-   * Chrome e aparelhos com pouca memória.
+   * Define uma escala que respeita simultaneamente limite de dimensão
+   * e limite total de pixels. A versão anterior impunha escala mínima
+   * de 0,6 e podia ultrapassar o limite em páginas muito altas.
    */
-  function calcularEscalaExportacao(largura, altura) {
-    const dprDesejado = Math.min(2, Math.max(1, window.devicePixelRatio || 1));
-    const MAX_DIMENSAO = 8192;
-    const MAX_AREA = 28 * 1024 * 1024; // margem segura para Safari/iOS
-    const porDimensao = Math.min(MAX_DIMENSAO / largura, MAX_DIMENSAO / altura);
-    const porArea = Math.sqrt(MAX_AREA / (largura * altura));
-    return Math.max(0.6, Math.min(dprDesejado, porDimensao, porArea));
+  function calcularEscalaExportacao(largura, altura, modoSeguro = false) {
+    const { iOS, safari } = ambienteCanvasRestrito();
+    const dprDesejado = Math.min(modoSeguro ? 1 : 2, Math.max(1, window.devicePixelRatio || 1));
+
+    let maxDimensao = iOS ? 4096 : 8192;
+    let maxArea = iOS ? 7 * 1024 * 1024 : (safari ? 12 : 18) * 1024 * 1024;
+    if (modoSeguro) {
+      maxDimensao = Math.min(maxDimensao, 4096);
+      maxArea = Math.min(maxArea, 8 * 1024 * 1024);
+    }
+
+    const porDimensao = Math.min(maxDimensao / largura, maxDimensao / altura);
+    const porArea = Math.sqrt(maxArea / (largura * altura));
+    const escala = Math.min(dprDesejado, porDimensao, porArea);
+
+    // Não aplicamos um mínimo artificial: ele poderia tornar o canvas
+    // maior que o suportado. 0,02 serve apenas contra valores inválidos.
+    return Math.max(0.02, Number.isFinite(escala) ? escala : 1);
+  }
+
+  function medirPaginaParaExportacao() {
+    const docEl = document.documentElement;
+    const largura = Math.max(1, docEl.clientWidth, document.body.clientWidth);
+    const altura = Math.max(
+      1,
+      document.body.scrollHeight,
+      document.body.offsetHeight,
+      docEl.scrollHeight,
+      docEl.offsetHeight,
+      docEl.clientHeight
+    );
+    return { largura, altura };
+  }
+
+  async function capturarPaginaComoCanvas(modoSeguro = false) {
+    const { largura, altura } = medirPaginaParaExportacao();
+    const escala = calcularEscalaExportacao(largura, altura, modoSeguro);
+    const bgColor = getComputedStyle(document.body).backgroundColor || '#0F1B16';
+
+    document.body.classList.toggle('export-safe-mode', modoSeguro);
+    await sleep(modoSeguro ? 120 : 60);
+
+    try {
+      const canvas = await html2canvas(document.body, {
+        scale: escala,
+        useCORS: true,
+        allowTaint: false,
+        foreignObjectRendering: false,
+        backgroundColor: bgColor,
+        scrollX: 0,
+        scrollY: 0,
+        x: 0,
+        y: 0,
+        width: largura,
+        height: altura,
+        windowWidth: largura,
+        windowHeight: altura,
+        logging: false,
+        removeContainer: true,
+        imageTimeout: modoSeguro ? 3500 : 6500,
+        ignoreElements: el => Boolean(
+          el && (
+            el.id === 'js-toolbar' ||
+            el.id === 'js-toast' ||
+            el.id === 'js-loading' ||
+            el.id === 'js-historico-fab' ||
+            el.id === 'js-historico-backdrop' ||
+            el.classList?.contains('modal-overlay')
+          )
+        ),
+        onclone: clonedDoc => {
+          clonedDoc.documentElement.style.scrollBehavior = 'auto';
+          const clonedBody = clonedDoc.body;
+          if (clonedBody) {
+            clonedBody.classList.add('is-exporting');
+            clonedBody.classList.toggle('export-safe-mode', modoSeguro);
+            clonedBody.style.width = `${largura}px`;
+            clonedBody.style.minHeight = `${altura}px`;
+          }
+
+          const tb = clonedDoc.getElementById('js-toolbar');
+          if (tb) tb.remove();
+
+          clonedDoc.querySelectorAll('.card-entregas').forEach(ul => {
+            ul.style.maxHeight = 'none';
+            ul.style.overflow = 'visible';
+          });
+
+          clonedDoc.querySelectorAll('.analyst-card, .pinwheel, .wind-orbit').forEach(el => {
+            el.style.animation = 'none';
+            el.style.transition = 'none';
+          });
+
+          clonedDoc.querySelectorAll('.analyst-card').forEach(card => {
+            card.style.opacity = '1';
+            card.style.transform = 'none';
+          });
+
+          clonedDoc.querySelectorAll('img').forEach(img => {
+            img.loading = 'eager';
+            img.decoding = 'sync';
+          });
+        },
+      });
+
+      if (!canvas || !canvas.width || !canvas.height) {
+        throw new Error('A captura retornou um canvas vazio.');
+      }
+      return canvas;
+    } finally {
+      document.body.classList.remove('export-safe-mode');
+    }
   }
 
   async function exportarImagem() {
@@ -1643,6 +1905,8 @@
     showToast('⏳ Gerando imagem... aguarde.');
 
     const wasEditing = state.editMode;
+    let restaurarImagens = () => {};
+
     if (wasEditing) {
       document.body.classList.remove('edit-mode');
       applyEditStateToAll(false);
@@ -1651,82 +1915,34 @@
     ui.toolbar.style.setProperty('display', 'none', 'important');
     document.body.classList.add('is-exporting');
 
-    // Aguarda layout, fontes e imagens estabilizarem antes da captura.
-    if (document.fonts && document.fonts.ready) {
-      try { await document.fonts.ready; } catch (_) {}
-    }
-    await sleep(180);
-
     try {
-      const docEl = document.documentElement;
-      // A largura visual evita que um elemento deslocado alguns pixels crie
-      // uma imagem gigantesca. A altura continua cobrindo todo o conteúdo.
-      const totalW = Math.max(docEl.clientWidth, document.body.clientWidth);
-      const totalH = Math.max(
-        document.body.scrollHeight,
-        document.body.offsetHeight,
-        docEl.scrollHeight,
-        docEl.offsetHeight,
-        docEl.clientHeight
-      );
-      const escala = calcularEscalaExportacao(totalW, totalH);
-      const bgColor = getComputedStyle(document.body).backgroundColor || '#0F1B16';
-
-      const canvas = await html2canvas(document.body, {
-        scale: escala,
-        useCORS: true,
-        allowTaint: false,
-        backgroundColor: bgColor,
-        scrollX: 0,
-        scrollY: 0,
-        x: 0,
-        y: 0,
-        width: totalW,
-        height: totalH,
-        windowWidth: totalW,
-        windowHeight: totalH,
-        logging: false,
-        removeContainer: true,
-        imageTimeout: 12000,
-        onclone: (clonedDoc) => {
-          const clonedBody = clonedDoc.body;
-          if (clonedBody) clonedBody.classList.add('is-exporting');
-
-          const tb = clonedDoc.getElementById('js-toolbar');
-          if (tb) tb.style.display = 'none';
-
-          clonedDoc.querySelectorAll('.card-entregas').forEach(ul => {
-            ul.style.maxHeight = 'none';
-            ul.style.overflow = 'visible';
-          });
-
-          clonedDoc.querySelectorAll('.analyst-card, .pinwheel, .wind-orbit').forEach(el => {
-            el.style.animation = 'none';
-            el.style.transition = 'none';
-          });
-
-          clonedDoc.querySelectorAll('.analyst-card').forEach(card => {
-            card.style.opacity = '1';
-            card.style.transform = 'none';
-          });
-        }
-      });
-
-      if (!canvas.width || !canvas.height) {
-        throw new Error('A captura retornou um canvas vazio.');
-      }
+      await aguardarFontesParaExportacao();
+      restaurarImagens = await prepararImagensParaExportacao();
+      await sleep(160);
 
       const sufixo = ((state.dados && state.dados.dataDailyISO) || getSemana());
-      await baixarCanvasComoPng(canvas, `Daily-Core-Credito-${sufixo}.png`);
+      const nomeArquivo = `Daily-Core-Credito-${sufixo}.png`;
+
+      try {
+        const canvas = await capturarPaginaComoCanvas(false);
+        await baixarCanvasComoPng(canvas, nomeArquivo);
+      } catch (erroPrimeiraTentativa) {
+        console.warn('[Exportação] Primeira tentativa falhou; iniciando modo compatível:', erroPrimeiraTentativa);
+        // Segunda tentativa: menos pixels e sem filtros/máscaras complexos.
+        const canvasSeguro = await capturarPaginaComoCanvas(true);
+        await baixarCanvasComoPng(canvasSeguro, nomeArquivo);
+      }
+
       showToast('🖼️ Imagem gerada com sucesso!');
     } catch (err) {
       console.error('Erro ao gerar imagem:', err);
       const detalhe = err && err.name === 'SecurityError'
         ? ' Uma imagem externa bloqueou a exportação.'
         : '';
-      showToast(`❌ Erro ao gerar imagem.${detalhe} Recarregue a página e tente novamente.`);
+      showToast(`❌ Erro ao gerar imagem.${detalhe} Atualize a página e tente novamente.`, 7500);
     } finally {
-      document.body.classList.remove('is-exporting');
+      try { restaurarImagens(); } catch (_) {}
+      document.body.classList.remove('is-exporting', 'export-safe-mode');
       ui.toolbar.style.removeProperty('display');
       if (wasEditing) {
         document.body.classList.add('edit-mode');
