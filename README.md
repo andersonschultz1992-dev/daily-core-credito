@@ -5,21 +5,14 @@ DevOps · Confederação Sicredi). Aplicação **front-end estático** (HTML/CSS
 puro) publicado no **GitHub Pages**, com **Supabase** como única fonte de
 dados — sem JSON local, sem login, sem IA, sem custo de API.
 
-> **v8.3** — bloqueio global de edição, identidade cooperativa, fundo vivo e viewport responsiva: agora a aplicação possui
-> três temas — **Escuro**, **Claro** e **Cooperativo**. O novo tema usa a
-> paleta verde Sicredi fornecida para o projeto e um fundo vetorial animado
-> inspirado em cata-ventos, sem imagens externas e com redução automática
-> de movimento para acessibilidade. Esta revisão também ancora o rodapé ao
-> final da viewport, elimina faixas claras em monitores altos e adiciona
-> suporte às áreas seguras e à altura dinâmica do Safari no iPhone. A base funcional continua seguindo a
-> simplicidade da v7.0: a versão anterior havia experimentado
-> geração de destaques por IA (Anthropic/OpenAI) com painel administrativo
-> autenticado. Esta versão remove tudo isso. O destaque executivo do
-> cabeçalho agora é escolhido manualmente de uma biblioteca local com 34
-> opções prontas, e qualquer pessoa que abrir o app pode editar e salvar
-> diretamente — exatamente como nas primeiras versões, só que agora os
-> dados ficam no Supabase (compartilhados entre todo o time) em vez do
-> navegador local de cada um.
+> **v8.4** — correção de carregamento contínuo e exportação PNG multibrowser.
+> O processamento da logo agora é executado uma única vez, eliminando o
+> ciclo de eventos `load` que mantinha a aba do navegador aparentemente
+> carregando. A geração da imagem ganhou limite real de canvas por
+> navegador, timeout de fontes e imagens, tratamento de fotos externas,
+> conversão PNG com fallback e uma segunda tentativa em modo compatível
+> para Safari, Firefox, Chrome e Edge. O bloqueio de edição e o banco não
+> sofreram alterações nesta revisão.
 
 ---
 
@@ -275,6 +268,9 @@ de código é necessária. Cada item segue o formato:
 ---
 
 ## 7. Exportação e compartilhamento
+
+A exportação usa duas estratégias: a captura normal e, se o navegador rejeitar o canvas, um **modo compatível automático** com menos pixels e efeitos gráficos simplificados. Imagens externas sem CORS são substituídas por um avatar local apenas no PNG, sem alterar os dados salvos.
+
 
 - **Imagem (PNG)**: captura a página inteira — cabeçalho, destaque, todos
   os cards (com **todas** as entregas, mesmo as que ficam ocultas pelo

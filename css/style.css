@@ -1,5 +1,5 @@
 /* ============================================================
-   DAILY CORE & CRÉDITO — v8.1 "COOPERATIVISMO TECH"
+   DAILY CORE & CRÉDITO — v8.4 "COOPERATIVISMO TECH"
    Design System: Plataforma corporativa interna
    Referências: Grafana Enterprise · Dynatrace · Datadog
    Azure Portal · Elastic Observability · Splunk
@@ -2383,8 +2383,8 @@ body.is-exporting .cooperative-wind-bg { display: none; }
   place-items: center;
   font-size: 24px;
   color: var(--green-400);
-  background: color-mix(in srgb, var(--green-400) 14%, transparent);
-  border: 1px solid color-mix(in srgb, var(--green-400) 28%, transparent);
+  background: rgba(63, 181, 133, 0.14);
+  border: 1px solid rgba(63, 181, 133, 0.28);
 }
 .lock-modal-title {
   margin: 0 0 9px;
@@ -2420,4 +2420,28 @@ body.is-exporting .pinwheel {
 body.is-exporting {
   overflow-x: hidden !important;
   min-height: 0 !important;
+}
+
+
+/* v8.4 — modo de compatibilidade usado apenas na segunda tentativa
+   de exportação. Remove efeitos que variam entre motores de navegador
+   sem alterar a aparência normal da aplicação. */
+body.export-safe-mode *,
+body.export-safe-mode *::before,
+body.export-safe-mode *::after {
+  animation: none !important;
+  transition: none !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+  filter: none !important;
+  mask-image: none !important;
+  -webkit-mask-image: none !important;
+}
+
+body.is-exporting .toast,
+body.is-exporting .loading-overlay,
+body.is-exporting .modal-overlay,
+body.is-exporting .historico-fab,
+body.is-exporting .historico-backdrop {
+  display: none !important;
 }
